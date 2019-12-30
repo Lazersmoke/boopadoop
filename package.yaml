@@ -1,0 +1,52 @@
+name:                boopadoop
+version:             0.1.0.0
+github:              "Lazersmoke/boopadoop"
+license:             MIT
+author:              "Sam Quinn"
+maintainer:          "lazersmoke@gmail.com"
+copyright:           "2019 Sam Quinn"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/Lazersmoke/boopadoop#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- WAVE
+- primes
+- split
+- semialign
+
+library:
+  source-dirs: src
+
+executables:
+  boopadoop-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - boopadoop
+
+tests:
+  boopadoop-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - boopadoop

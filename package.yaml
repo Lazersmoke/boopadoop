@@ -8,11 +8,10 @@ copyright:           "2019 Sam Quinn"
 
 extra-source-files:
 - README.md
-- ChangeLog.md
 
 # Metadata used when publishing your package
-# synopsis:            Short description of your package
-# category:            Web
+synopsis:            Mathematically sound sound synthesis
+category:            Music
 
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
@@ -27,7 +26,8 @@ dependencies:
 - semialign
 
 library:
-  source-dirs: src
+  source-dirs: 
+  - src
 
 executables:
   boopadoop-exe:

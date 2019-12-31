@@ -1,8 +1,9 @@
 module Main where
 
-import Lib
-import Diagram
-import Rhythm
+import Boopadoop
+import Boopadoop.Diagram
+import Boopadoop.Rhythm
+import Boopadoop.Interval
 
 main :: IO ()
 main = pure ()

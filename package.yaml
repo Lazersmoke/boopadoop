@@ -24,10 +24,23 @@ dependencies:
 - primes
 - split
 - semialign
+- vector
+- containers
 
 library:
   source-dirs: 
   - src
+  other-modules:
+  - Boopadoop.Diagram
+  - Boopadoop.Rhythm
+  - Boopadoop.Interval
+  - Boopadoop.Discrete
+
+executables:
+  perfprof:
+    main: Main.hs
+    source-dirs: perfprof
+    dependencies: boopadoop
 
 tests:
   boopadoop-test:

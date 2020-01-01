@@ -1,4 +1,5 @@
 .stack-work/
+.stack-work-prof/
 boopadoop.cabal
 *~
 *.wav

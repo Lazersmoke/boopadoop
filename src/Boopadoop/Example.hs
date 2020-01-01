@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 module Boopadoop.Example where
 
 import Boopadoop
@@ -43,4 +44,33 @@ tiptoeEmulation f = amplitudeModulate tiptoeEnvelope $ phaseModulate 0.005 (setV
 
 downBeat :: Beat DWave
 downBeat = RoseBeat [Beat (sinWave concertA),Rest,Beat (sinWave $ intervalOf perfectFifth concertA)]
+
+exampleConvCont :: DWave
+exampleConvCont = sampledConvolution 1600 0.02 (sampleFrom $ const $ bandpassFilter concertA 1) $ unfilteredCont
+
+filteredDisc :: Waveform Double Discrete
+filteredDisc = sampledConvolution 1600 0.02 (sampleFrom $ const $ bandpassFilter concertA 1) $ unfiltered
+
+bandFilterIt :: DWave -> DWave
+bandFilterIt = sampledConvolution 1600 0.05 (sampleFrom $ const $ bandpassFilter concertA 100)
+
+unfilteredCont :: Waveform Double Double
+unfilteredCont = sampleFrom $ \t -> let !w = (sample (sinWave concertA) t + sample (sinWave (18 / 13 * concertA)) t)* 0.5 in w
+
+unfiltered :: Waveform Double Discrete
+unfiltered = sampleFrom $ \t -> let !w = (sample (discretize $ sinWave concertA) t * 0.5 + sample (discretize $ sinWave (18 / 13 * concertA)) t * 0.5) in w
+
+filteredTicks :: Wavetable
+filteredTicks = tickConvolution 165 5 (sampleFrom $ const $ optimizeWavetable $ tickTable stdtr $ bandpassFilter concertA 1) $ unfilteredTicks
+
+unfilteredTicks :: Wavetable
+unfilteredTicks = tickTable stdtr $ sampleFrom $ \t -> let !w = (sample (discretize $ sinWave concertA) t * 0.5 + sample (discretize $ sinWave (18 / 13 * concertA)) t * 0.5) in w
+
+stdtr :: Double
+stdtr = 32000
+
+outputGoal :: Waveform Double Discrete
+outputGoal = balanceChord [discretize $ sinWave concertA,discretize $ sampleFrom $ const 0]
+
+
 

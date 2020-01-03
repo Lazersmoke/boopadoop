@@ -2,6 +2,7 @@
 module Boopadoop.Example where
 
 import Boopadoop
+import Data.Complex
 
 testProg :: DWave
 testProg = sequenceNotes
@@ -45,8 +46,8 @@ tiptoeEmulation f = amplitudeModulate tiptoeEnvelope $ phaseModulate 0.005 (setV
 downBeat :: Beat DWave
 downBeat = RoseBeat [Beat (sinWave concertA),Rest,Beat (sinWave $ intervalOf perfectFifth concertA)]
 
-exampleConvCont :: DWave
-exampleConvCont = sampledConvolution 1600 0.02 (sampleFrom $ const $ bandpassFilter concertA 1) $ unfilteredCont
+filteredCont :: DWave
+filteredCont = sampledConvolution 1600 0.02 (sampleFrom $ const $ bandpassFilter concertA 1) $ unfilteredCont
 
 filteredDisc :: Waveform Double Discrete
 filteredDisc = sampledConvolution 1600 0.02 (sampleFrom $ const $ bandpassFilter concertA 1) $ unfiltered
@@ -61,13 +62,21 @@ unfiltered :: Waveform Double Discrete
 unfiltered = sampleFrom $ \t -> let !w = (sample (discretize $ sinWave concertA) t * 0.5 + sample (discretize $ sinWave (18 / 13 * concertA)) t * 0.5) in w
 
 filteredTicks :: Wavetable
-filteredTicks = tickConvolution 165 5 (sampleFrom $ const $ optimizeWavetable $ tickTable stdtr $ bandpassFilter concertA 1) $ unfilteredTicks
+filteredTicks = tickConvolution (160) 10 (sampleFrom $ const theFilter) $ unfilteredTicks
+  where
+    !theFilter = optimizeFilter (160) $ tickTable stdtr $ bandpassFilter concertA 100
 
 unfilteredTicks :: Wavetable
-unfilteredTicks = tickTable stdtr $ sampleFrom $ \t -> let !w = (sample (discretize $ sinWave concertA) t * 0.5 + sample (discretize $ sinWave (18 / 13 * concertA)) t * 0.5) in w
+unfilteredTicks = solidSlice (0-160) (2*stdtr + 160) $ modulate (+) (setVolume 0.5 $ fastSin concertA stdtr) (setVolume 0.5 $ fastSin (18 / 13 * concertA) stdtr) 
 
-stdtr :: Double
-stdtr = 32000
+testFourier :: Wavetable
+testFourier = realDFT 100 44000 $ fWave
+
+fWave :: Wavetable
+fWave = solidSlice (-2000) (2000) . discretize . tickTable 44000 . sinWave $ concertA
+
+outputTicks :: Wavetable
+outputTicks = tickTable stdtr $ balanceChord [discretize $ sinWave concertA,discretize $ sampleFrom $ const 0]
 
 outputGoal :: Waveform Double Discrete
 outputGoal = balanceChord [discretize $ sinWave concertA,discretize $ sampleFrom $ const 0]

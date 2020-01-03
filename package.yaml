@@ -1,5 +1,5 @@
 name:                boopadoop
-version:             0.0.0.1
+version:             0.0.0.2
 github:              "Lazersmoke/boopadoop"
 license:             MIT
 author:              "Sam Quinn"
@@ -26,6 +26,7 @@ dependencies:
 - semialign
 - vector
 - containers
+- bytestring
 
 library:
   source-dirs: 

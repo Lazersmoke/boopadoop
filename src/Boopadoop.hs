@@ -11,8 +11,7 @@ module Boopadoop
   ,module Boopadoop.Discrete
   ) where
 
-import Data.WAVE as WAVE
-import Control.Applicative
+import qualified Data.WAVE as WAVE
 import Control.Monad.ST
 import Control.Monad
 import Boopadoop.Diagram
@@ -20,19 +19,11 @@ import Boopadoop.Rhythm
 import Boopadoop.Interval
 import Boopadoop.Discrete
 import Data.List
-import Data.Bits
 import Data.Int
 import Data.Complex
-import Data.Foldable
-import qualified Data.IntMap.Lazy as IntMap
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
-import qualified Data.Vector.Unboxed.Mutable as MVector
-import qualified Data.ByteString.Lazy as BS
-import qualified Data.ByteString.Builder as BSB
 import Debug.Trace
-import System.IO.Unsafe
-import Data.IORef
 
 -- | A 'Waveform' is a function (of time) that we can later sample.
 newtype Waveform t a = Waveform 
@@ -178,33 +169,33 @@ mergeWaves notes = sampleFrom $ \t -> sum (map (sampleAt t) notes)
 
 -- | @'waveformToWAVE' outputLength@ gives a @'WAVE'@ file object by sampling the given @'DWave'@ at @44100Hz@.
 -- May disbehave or clip based on behavior of @'doubleToSample'@ if the DWave takes values outside of @[-1,1]@.
-waveformToWAVE :: Tick -> Int -> Wavetable -> WAVE
-waveformToWAVE outTicks sampleRate w = WAVE
-  {waveHeader = WAVEHeader
-    {waveNumChannels = 1
-    ,waveFrameRate = sampleRate
-    ,waveBitsPerSample = 32
-    ,waveFrames = Just $ fromIntegral outTicks
+waveformToWAVE :: Tick -> Int -> Wavetable -> WAVE.WAVE
+waveformToWAVE outTicks sampleRate w = WAVE.WAVE
+  {WAVE.waveHeader = WAVE.WAVEHeader
+    {WAVE.waveNumChannels = 1
+    ,WAVE.waveFrameRate = sampleRate
+    ,WAVE.waveBitsPerSample = 32
+    ,WAVE.waveFrames = Just $ fromIntegral outTicks
     }
-  ,waveSamples = [map (unDiscrete . sample w) [0 .. outTicks - 1]]
+  ,WAVE.waveSamples = [map (unDiscrete . sample w) [0 .. outTicks - 1]]
   }
 
-wavestreamToWAVE :: Tick -> Int -> [Discrete] -> WAVE
-wavestreamToWAVE outTicks sampleRate ws = WAVE
-  {waveHeader = WAVEHeader
-    {waveNumChannels = 1
-    ,waveFrameRate = sampleRate
-    ,waveBitsPerSample = 32
-    ,waveFrames = Just $ fromIntegral outTicks
+wavestreamToWAVE :: Tick -> Int -> [Discrete] -> WAVE.WAVE
+wavestreamToWAVE outTicks sampleRate ws = WAVE.WAVE
+  {WAVE.waveHeader = WAVE.WAVEHeader
+    {WAVE.waveNumChannels = 1
+    ,WAVE.waveFrameRate = sampleRate
+    ,WAVE.waveBitsPerSample = 32
+    ,WAVE.waveFrames = Just $ fromIntegral outTicks
     }
-  ,waveSamples = [take outTicks $ map unDiscrete ws]
+  ,WAVE.waveSamples = [take outTicks $ map unDiscrete ws]
   }
 
 
 
 -- | Triangle wave of the given frequency
 triWave :: (Ord a,RealFrac a) => a -> Waveform a a
-triWave f = sampleFrom $ \t -> let r = (t * f) - fromIntegral (floor (t * f)) in if r < 0.25
+triWave f = sampleFrom $ \t -> let r = (t * f) - fromIntegral (floor (t * f) :: Int) in if r < 0.25
   then 4 * r
   else if r < 0.75
     then 2 - (4 * r)
@@ -218,18 +209,18 @@ stdtr = 32000
 -- The volume is also attenuated by 50% to not blow out your eardrums.
 -- Also pretty prints the wave.
 testWave :: Double -> String -> Wavetable -> IO ()
-testWave len fp w = print w >> pure w >>= putWAVEFile (fp ++ ".wav") . waveformToWAVE (floor $ len*stdtr) stdtr . amplitudeModulate (sampleFrom $ const 0.5)
+testWave len fp w = print w >> pure w >>= WAVE.putWAVEFile (fp ++ ".wav") . waveformToWAVE (floor $ len*stdtr) stdtr . amplitudeModulate (sampleFrom $ const 0.5)
 
 -- | Output the first @len@ seconds of the given wave stream to a @.wav@ file at the given path for testing.
 testWaveStream :: Double -> String -> [Discrete] -> IO ()
-testWaveStream len fp = putWAVEFile (fp ++ ".wav") . wavestreamToWAVE (floor $ len*stdtr) stdtr
+testWaveStream len fp = WAVE.putWAVEFile (fp ++ ".wav") . wavestreamToWAVE (floor $ len*stdtr) stdtr
 
 
 -- | Outputs a sound test of the given @'PitchFactorDiagram'@ as an interval above @'concertA'@ as a @'sinWave'@ to the file @diag.wav@ for testing.
-testDiagram :: PitchFactorDiagram -> IO ()
-testDiagram = putWAVEFile "diag.wav" . waveformToWAVE (3*32000) 32000 . tickTable 32000 . fmap doubleToDiscrete . buildTestTrack . realToFrac . diagramToRatio . normalizePFD
-  where
-    buildTestTrack p = sequenceNotes [((0,1),sinWave concertA),((1,2),sinWave (concertA * p)),((2,3), buildChord [1,p] concertA)]
+--testDiagram :: PitchFactorDiagram -> IO ()
+--testDiagram = putWAVEFile "diag.wav" . waveformToWAVE (3*32000) 32000 . tickTable 32000 . fmap doubleToDiscrete . buildTestTrack . realToFrac . diagramToRatio . normalizePFD
+  --where
+    --buildTestTrack p = sequenceNotes [((0,1),sinWave concertA),((1,2),sinWave (concertA * p)),((2,3), buildChord [1,p] concertA)]
 
 -- | Converts a rhythm of @'DWave'@ notes to a combined @'DWave'@ according to the timing rules of @'Beat'@.
 --sequenceToBeat :: Double -> Double -> Beat DWave -> DWave
@@ -331,7 +322,7 @@ tickConvolution tickRadius skipRate profile w = sampleFrom $ \t -> let !kern = s
   where
     sampleDeltas = map (*skipRate) [-stepsPerSide.. stepsPerSide]
     stepsPerSide = tickRadius `div` skipRate
-    !stepModifier = realToFrac . recip . fromIntegral $ stepsPerSide
+    -- !stepModifier = realToFrac . recip . fromIntegral $ stepsPerSide :: Double
 
 --accuCount :: IORef Integer
 --accuCount = unsafePerformIO $ newIORef 0
@@ -350,17 +341,13 @@ fastTickConvolutionFixedKern tickRate tickStart tickRadius kern w = kern `seq` g
       v <- BA.unsafeThawByteArray t
       BA.writeByteArray v (b `mod` windowSize) (unDiscrete $ sample w (o + tickRadius))
       let 
-        accu v tot (dt:dts) = do
+        accu !tot (dt:dts) = do
           --let !() = unsafePerformIO $ readIORef accuCount >>= \x -> (if x `mod` 10000 == 0 then putStrLn ("accu: " ++ show x) else pure ()) >> writeIORef accuCount (x + 1)
-          let !readIx = (b + tickRadius + dt + 1) `mod` windowSize
-          s <- BA.readByteArray v readIx
-          let !discs = Discrete s
-          let !kernSamp = 0.01 * Discrete (BA.indexByteArray kernel dt)
+          s <- BA.readByteArray v ((b + tickRadius + dt + 1) `mod` windowSize)
           let !toAdd = (0.01 * Discrete (BA.indexByteArray kernel dt)) * Discrete s
-          let !tots = tot + toAdd
-          accu v tots dts
-        accu _ tot [] = pure tot
-      k <- accu v 0 sampleDeltas
+          accu (tot + toAdd) dts
+        accu tot [] = pure tot
+      k <- accu 0 sampleDeltas
       !v' <- BA.unsafeFreezeByteArray v
       pure (k,v')
     go (!t,!b) o = let (s,t') = stepSt (t,b) o in s `seq` (s : go (t',(b+1) `mod` windowSize) (o + 1))
@@ -381,8 +368,8 @@ sampledConvolution :: (RealFrac t, Fractional a)
 sampledConvolution convolutionSampleRate convolutionRadius profile w = sampleFrom $ \t -> sum . map (\dt -> (*(realToFrac . recip $ convolutionSampleRate * convolutionRadius)) . (* sample w (t + dt)) . sample (sample profile t) $ dt) $ sampleDeltas
   where
     sampleDeltas = map ((/convolutionSampleRate) . realToFrac) [-samplesPerSide .. samplesPerSide]
-    samplesPerSide = floor (convolutionRadius * convolutionSampleRate)
-    sampleCount = 2 * samplesPerSide + 1
+    samplesPerSide = floor (convolutionRadius * convolutionSampleRate) :: Int
+    --sampleCount = 2 * samplesPerSide + 1
 
 
 -- | Makes a filter which selects frequencies near @bandCenter@ with tuning parameter @bandSize@.
@@ -406,7 +393,7 @@ takeSamples sampleRate w = map (sample w . (/sampleRate)) [0 .. 115]
 
 
 -- | Discretize the output of a @'Double'@ producing waveform
-discretize :: Waveform t Double -> Waveform t Discrete
+discretize :: Functor f => f Double -> f Discrete
 discretize = fmap (Discrete . properFloor . (*discFactor))
 
 -- | Discretize the input to a @'Double'@ consuming waveform
@@ -454,7 +441,7 @@ fourierTransform tickRadius fTickRate x = sampleFrom $ \f -> sum . map (\n -> sa
 realDFT :: Tick -- ^ Radius of Fourier Transform window in @'Tick'@s. Try 200
         -> Double -- ^ Sampling rate to use for the Fourier transform. Try the sample sample rate as the @'Wavetable'@
         -> Wavetable -> Wavetable
-realDFT tickRadius fTickRate x = discretize $ tickTable 1 $ fmap ((min 1) . magnitude) $ fourierTransform tickRadius fTickRate ((\x -> discreteToDouble x :+ 0) <$> solidSlice (-tickRadius) tickRadius x)
+realDFT tickRadius fTickRate w = discretize $ tickTable 1 $ fmap ((min 1) . magnitude) $ fourierTransform tickRadius fTickRate ((\x -> discreteToDouble x :+ 0) <$> solidSlice (-tickRadius) tickRadius w)
 
 -- | Skip every @n@ ticks in the in the given @'Waveform'@.
 -- @'sample' ('skipTicks' n w) k = 'sample' w (n*k)@
@@ -494,6 +481,7 @@ fft xs = zipWith (+) ys ts ++ zipWith (-) ys ts
           (evens, odds) = split xs
           split [] = ([], [])
           split [x] = ([x], [])
-          split (x:y:xs) = (x:xt, y:yt) where (xt, yt) = split xs
+          split (x:y:xss) = (x:xt, y:yt) where (xt, yt) = split xss
           ts = zipWith (\z k -> exp' k n * z) zs [0..]
-          exp' k n = cis $ -2 * pi * (fromIntegral k) / (fromIntegral n)
+          exp' :: Int -> Int -> Complex Double
+          exp' k a = cis $ -2 * pi * (fromIntegral k) / (fromIntegral a)

@@ -37,6 +37,8 @@ library:
   - Boopadoop.Rhythm
   - Boopadoop.Interval
   - Boopadoop.Discrete
+  ghc-options:
+  - -Wall
 
 executables:
   perfprof:

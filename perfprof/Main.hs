@@ -2,5 +2,6 @@ module Main where
 
 import Boopadoop
 import Boopadoop.Example
+import Boopadoop.Ideate
 
-main = testWaveStream 2 "fastFilteredTicks" $ fastFilteredTicks
+main = testWave 7 "metalliout" (metallicaTest globalMuSyncZero)

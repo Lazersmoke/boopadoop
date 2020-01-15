@@ -27,6 +27,7 @@ dependencies:
 - vector
 - containers
 - bytestring
+- primitive
 
 library:
   source-dirs: 

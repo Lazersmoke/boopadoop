@@ -1,12 +1,31 @@
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TupleSections #-}
 -- | Representing rhythms as rose trees.
 module Boopadoop.Rhythm where
 
 import Data.Numbers.Primes
 import Data.List.Split
 
--- | A rhythm is represented as a rose tree where each subtree is given equal amounts of time.
--- Leaves are either a Beat of type @a@ or empty (a rest).
-data Beat a = RoseBeat [Beat a] | Beat a | Rest
+-- | A rhythm is represented as a rose tree where each subtree is given time with integer weights.
+-- Leaves are any data.
+data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
+
+--analyzeBeat :: SummaryChar a => Beat a -> String
+--analyzeBeat (RoseBeat bs) = show $ fmap (\(k,b) -> (k,analyzeBeat b)) $ bs
+--analyzeBeat b = show b
+
+instance Applicative Beat where
+  pure = Beat
+  Beat f <*> Beat x = Beat $ f x
+  Beat f <*> RoseBeat xs = RoseBeat $ fmap (\(k,x) -> (k,fmap f x)) xs
+  RoseBeat fs <*> x = RoseBeat $ fmap (\(k,f) -> (k,f <*> x)) fs
+
+instance Monad Beat where
+  Beat x >>= f = f x
+  RoseBeat xs >>= f = RoseBeat $ fmap (\(k,x) -> (k,x >>= f)) xs
+
+subdivs :: [(Int,a)] -> Int
+subdivs = sum . fmap fst
 
 -- | Class for things that can be summarized in a single character, for use in printing out rhythms.
 class SummaryChar a where
@@ -14,26 +33,49 @@ class SummaryChar a where
 
 -- | Show the rhythm by printing the summary characters, or @'.'@ for rests.
 instance SummaryChar a => Show (Beat a) where
-  show (RoseBeat bs) = "[" ++ (bs >>= show) ++ "]"
+  show (RoseBeat bs) = "[" ++ (bs >>= \(k,b) -> show b ++ replicate (k-1) '-') ++ "]"
   show (Beat x) = [sumUp x]
-  show Rest = "."
 
--- | A rack of drums. Simple enumeration of the different possible drum types.
-data DrumRack = Kick | Snare
+instance SummaryChar a => SummaryChar (Maybe a) where
+  sumUp Nothing = '.'
+  sumUp (Just x) = sumUp x
 
 instance SummaryChar DrumRack where
   sumUp Kick = 'O'
   sumUp Snare = 'x'
 
+instance SummaryChar () where
+  sumUp () = '\''
+
+-- | A rack of drums. Simple enumeration of the different possible drum types.
+data DrumRack = Kick | Snare
+
+equalTime :: [Beat a] -> Beat a
+equalTime = RoseBeat . fmap (1,)
+
 -- | The standard rock beat (or half of it) played on the 'DrumRack'
-rockBeat :: Beat DrumRack
-rockBeat = RoseBeat [Beat Kick, Rest, Beat Snare, Rest]
+rockBeat :: Beat (Maybe DrumRack)
+rockBeat = equalTime [Beat (Just Kick), Beat Nothing, Beat (Just Snare), Beat Nothing]
+
+swingIt :: Beat Int
+swingIt = RoseBeat [(3,Beat 0),(1,Beat 1)]
+
+tremelloTwice :: a -> Beat a
+tremelloTwice a = equalTime [Beat a, Beat a]
+
+swingTremelloTwice :: a -> Beat a
+swingTremelloTwice a = RoseBeat [(3,Beat a), (1,Beat a)]
+
+repeatBeat :: Int -> Beat a -> Beat a
+repeatBeat k b = equalTime $ replicate k b
 
 -- | Force there to be only prime divisions of time in the rhythm.
 -- This is done without affecting the actual rhythm.
 -- This operation is not uniquely valued in any way, and this algorithm prefers small primes first.
+{-
 primeBeat :: Beat a -> Beat a
 primeBeat (RoseBeat bs)
   | isPrime (length bs) = RoseBeat $ map primeBeat bs
   | otherwise = let (pf:_) = reverse $ primeFactors (length bs) in primeBeat . RoseBeat . map RoseBeat $ chunksOf pf bs
 primeBeat x = x
+-}

@@ -6,8 +6,10 @@ import Data.Ratio
 import Data.Bits
 import Data.Monoid
 import Data.List
+import qualified Data.Set as Set
 import Data.Numbers.Primes
 import Data.Align (salign)
+import Boopadoop.Rhythm (SummaryChar(sumUp))
 
 -- | 12 tone equal temperament semitone ratio. Equal to @2 ** (1/12)@.
 semi :: Floating a => a
@@ -26,7 +28,16 @@ takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allS
 -- small 'PitchFactorDiagram's with small factors in them, are generally consonant, and
 -- many interesting just intonation intervals can be written this way (see 'Boopadoop.Interval.perfectFifth'
 -- and 'Boopadoop.Interval.majorThird').
-newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Show
+newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Eq
+
+instance Show PitchFactorDiagram where
+  show pfd = show (diagramToRatio pfd) ++ " {" ++ show (getFactors pfd) ++ "}"
+
+instance Ord PitchFactorDiagram where
+  compare a b = compare (diagramToRatio a) (diagramToRatio b)
+
+instance SummaryChar PitchFactorDiagram where
+  sumUp pfd = "0123456789ab" !! ((`mod` 12) . floor $ diagramToSemi pfd)
 
 -- | 'mempty' is the unison PFD, with ratio @1@.
 instance Monoid PitchFactorDiagram where
@@ -62,7 +73,7 @@ normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . realToFr
 
 -- | Same as 'countPFD' but makes an effort to simplify the ratio from a 'Double' slightly to the simplest rational number within @0.0001@.
 countPFDFuzzy :: Double -> PitchFactorDiagram
-countPFDFuzzy = countPFD . flip approxRational 0.0001
+countPFDFuzzy = countPFD . flip approxRational 0.01
 
 -- | Calculates the 'PitchFactorDiagram' corresponding to a given frequency ratio by finding prime factors of the numerator and denominator.
 countPFD :: Rational -> PitchFactorDiagram
@@ -99,3 +110,33 @@ printTheSequence k
   | isPrime k = putStr ("(" ++ show k ++ ")") >> printTheSequence (k+1)
   | otherwise = putStr " . " >> printTheSequence (k+1)
 
+newtype Chord = Chord {getNotes :: Set.Set PitchFactorDiagram}
+
+chordOf :: [PitchFactorDiagram] -> Chord
+chordOf = Chord . Set.fromList
+
+rebaseChord :: PitchFactorDiagram -> Chord -> Chord
+rebaseChord p = onNotes (addPFD p)
+
+chordPitches :: Chord -> [PitchFactorDiagram]
+chordPitches = Set.toList . getNotes
+
+onNotes :: (PitchFactorDiagram -> PitchFactorDiagram) -> Chord -> Chord
+onNotes f (Chord c) = Chord $ Set.map f c
+
+addPitch :: PitchFactorDiagram -> Chord -> Chord
+addPitch p (Chord c) = Chord (Set.insert p c)
+
+invChrd :: Int -> Chord -> Chord
+invChrd 0 c = c
+invChrd k (Chord c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (Chord $ Set.insert (addPFD (Factors [1]) p) c')
+
+instance Show Chord where
+  show (Chord c) = unlines $ ["/="] ++ fmap show (Set.toList c) ++ ["\\="]
+
+consonantHalfway :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
+consonantHalfway x y = countPFDFuzzy $ num/denom
+  where
+    num = diagramToRatio y - diagramToRatio x
+    --denom = sum $ zipWith (\a b -> fromIntegral a * log (fromIntegral b)) (zipWith (-) (getFactors y) (getFactors x ++ repeat 0)) primes
+    denom = log $ diagramToRatio $ addPFD y (invertPFD x)

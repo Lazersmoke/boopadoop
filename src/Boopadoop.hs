@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
 -- | A music theory library for just intonation and other mathematically pure ideas.
@@ -12,6 +13,8 @@ module Boopadoop
 
 import Data.WAVE as WAVE
 import Control.Applicative
+import Control.Monad.ST
+import Control.Monad
 import Boopadoop.Diagram
 import Boopadoop.Rhythm
 import Boopadoop.Interval
@@ -22,10 +25,14 @@ import Data.Int
 import Data.Complex
 import Data.Foldable
 import qualified Data.IntMap.Lazy as IntMap
+import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
+import qualified Data.Vector.Unboxed.Mutable as MVector
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Builder as BSB
 import Debug.Trace
+import System.IO.Unsafe
+import Data.IORef
 
 -- | A 'Waveform' is a function (of time) that we can later sample.
 newtype Waveform t a = Waveform 
@@ -34,6 +41,9 @@ newtype Waveform t a = Waveform
 
 instance Functor (Waveform t) where
   fmap f w = sampleFrom $ f . sample w
+
+instance SummaryChar (Waveform t a) where
+  sumUp _ = '~'
 
 -- | A 'Double' valued wave with time also in terms of 'Double'.
 -- This models a real-valued waveform which typically has values in @[-1,1]@ and
@@ -86,9 +96,10 @@ sampleAt = flip sample
 sinWave :: Floating a => a -> Waveform a a
 sinWave f = sampleFrom $ \t -> let !freq = 2 * pi * f in sin (freq * t)
 
--- | Sine wave that is optimized to store only a small @'CompactWavetable'@. Frequency given in 
-fastSin :: Double -> Double -> Wavetable
-fastSin f sampleRate = exploitPeriodicity (floor $ sampleRate / f) $ tickTable sampleRate $ discretize $ sinWave f
+-- | Sine wave that is optimized to store only a small @'CompactWavetable'@.
+-- The period is given in ticks because non-tick-multiple period sin waves will have aliasing under this optimization!
+fastSin :: Tick -> Wavetable
+fastSin per = exploitPeriodicity per $ tickTable (fromIntegral per) $ discretize $ sinWave 1
 
 -- | @'compactWave' (l,h)@ is a wave which is @'True'@ on @[l,h)@ and @'False'@ elsewhere
 compactWave :: (Ord t,Num t) => (t,t) -> Waveform t Bool
@@ -110,6 +121,28 @@ modulate f a b = sampleFrom $ \t -> f (sample a t) (sample b t)
 -- @
 amplitudeModulate :: Num a => Waveform t a -> Waveform t a -> Waveform t a
 amplitudeModulate = modulate (*)
+
+-- | Control rate of speed of one waveform with another
+freqModulate :: Waveform t' p -> Waveform p a -> Waveform t' a
+freqModulate phaseSelect w = sampleFrom $ \t -> sample w (sample phaseSelect t)
+
+emuVCO :: Waveform Tick Double -> Waveform Double a -> [a]
+emuVCO freqSelect w = go 0 0
+  where
+    go i sampPoint = let skip = sample freqSelect i in sample w sampPoint : go (i + 1) (sampPoint + skip)
+
+recordStream :: [a] -> Waveform Tick a
+recordStream xs = sampleFrom ((xs!!) . fromIntegral)
+
+streamWavetable :: Wavetable -> [Discrete]
+streamWavetable w = map (sample w) [0..]
+
+memorizeStream :: Int -> [Discrete] -> Wavetable
+memorizeStream len = fromCompact . CompactWavetable . Vector.fromList . map unDiscrete . take len
+
+-- | Very slow
+integrateWave :: Num a => Waveform Tick a -> Waveform Tick a
+integrateWave w = sampleFrom $ \t -> sum . map (sample w) $ [0 .. t]
 
 -- | Modulate the phase of one wave with another. Used in synthesis.
 -- @
@@ -156,6 +189,19 @@ waveformToWAVE outTicks sampleRate w = WAVE
   ,waveSamples = [map (unDiscrete . sample w) [0 .. outTicks - 1]]
   }
 
+wavestreamToWAVE :: Tick -> Int -> [Discrete] -> WAVE
+wavestreamToWAVE outTicks sampleRate ws = WAVE
+  {waveHeader = WAVEHeader
+    {waveNumChannels = 1
+    ,waveFrameRate = sampleRate
+    ,waveBitsPerSample = 32
+    ,waveFrames = Just $ fromIntegral outTicks
+    }
+  ,waveSamples = [take outTicks $ map unDiscrete ws]
+  }
+
+
+
 -- | Triangle wave of the given frequency
 triWave :: (Ord a,RealFrac a) => a -> Waveform a a
 triWave f = sampleFrom $ \t -> let r = (t * f) - fromIntegral (floor (t * f)) in if r < 0.25
@@ -168,11 +214,16 @@ triWave f = sampleFrom $ \t -> let r = (t * f) - fromIntegral (floor (t * f)) in
 stdtr :: Num a => a
 stdtr = 32000
 
--- | Output the first ten seconds of the given @'DWave'@ to the file @test.wav@ for testing.
+-- | Output the first @len@ seconds of the given @'Wavetable'@ to a @.wav@ file at the given path for testing.
 -- The volume is also attenuated by 50% to not blow out your eardrums.
 -- Also pretty prints the wave.
-testWave :: String -> Wavetable -> IO ()
-testWave fp w = print w >> pure w >>= putWAVEFile (fp ++ ".wav") . waveformToWAVE (2*stdtr) stdtr . amplitudeModulate (sampleFrom $ const 0.5)
+testWave :: Double -> String -> Wavetable -> IO ()
+testWave len fp w = print w >> pure w >>= putWAVEFile (fp ++ ".wav") . waveformToWAVE (floor $ len*stdtr) stdtr . amplitudeModulate (sampleFrom $ const 0.5)
+
+-- | Output the first @len@ seconds of the given wave stream to a @.wav@ file at the given path for testing.
+testWaveStream :: Double -> String -> [Discrete] -> IO ()
+testWaveStream len fp = putWAVEFile (fp ++ ".wav") . wavestreamToWAVE (floor $ len*stdtr) stdtr
+
 
 -- | Outputs a sound test of the given @'PitchFactorDiagram'@ as an interval above @'concertA'@ as a @'sinWave'@ to the file @diag.wav@ for testing.
 testDiagram :: PitchFactorDiagram -> IO ()
@@ -181,10 +232,10 @@ testDiagram = putWAVEFile "diag.wav" . waveformToWAVE (3*32000) 32000 . tickTabl
     buildTestTrack p = sequenceNotes [((0,1),sinWave concertA),((1,2),sinWave (concertA * p)),((2,3), buildChord [1,p] concertA)]
 
 -- | Converts a rhythm of @'DWave'@ notes to a combined @'DWave'@ according to the timing rules of @'Beat'@.
-sequenceToBeat :: Double -> Double -> Beat DWave -> DWave
-sequenceToBeat startAt totalLength (RoseBeat bs) = let dt = totalLength / genericLength bs in fst $ foldl (\(w,i) b -> (mergeWaves . (:[w]) . sequenceToBeat (i * dt) dt $ b,i+1)) (sampleFrom $ const 0,0) bs
-sequenceToBeat startAt totalLength Rest = sampleFrom $ const 0
-sequenceToBeat startAt totalLength (Beat w) = modulate muting (compactWave (startAt,startAt + totalLength)) $ timeShift startAt w
+--sequenceToBeat :: Double -> Double -> Beat DWave -> DWave
+--sequenceToBeat startAt totalLength (RoseBeat bs) = let dt = totalLength / genericLength bs in fst $ foldl (\(w,i) b -> (mergeWaves . (:[w]) . sequenceToBeat (i * dt) dt $ b,i+1)) (sampleFrom $ const 0,0) bs
+--sequenceToBeat startAt totalLength Rest = sampleFrom $ const 0
+--sequenceToBeat startAt totalLength (Beat w) = modulate muting (compactWave (startAt,startAt + totalLength)) $ timeShift startAt w
 
 -- | Sequences some waves to play on the given time intervals.
 sequenceNotes :: (Ord t,Fractional t,Fractional a) => [((t,t),Waveform t a)] -> Waveform t a
@@ -244,13 +295,12 @@ timeShift dt = sampleFrom . (. subtract dt) . sample
 seekTo :: Num t => t -> Waveform t a -> Waveform t a
 seekTo dt = sampleFrom . (. (+dt)) . sample
 
-
 -- | Play several waves in a row with eqqual time each, using @'sequenceNotes'@.
-equalTime :: Double -> [DWave] -> DWave
-equalTime dt = sequenceNotes . foldl go []
-  where
-    go xs@(((_,t1),_):_) k = ((t1,t1 + dt),k):xs
-    go [] k = [((0,dt),k)]
+--equalTime :: Double -> [DWave] -> DWave
+--equalTime dt = sequenceNotes . foldl go []
+  --where
+    --go xs@(((_,t1),_):_) k = ((t1,t1 + dt),k):xs
+    --go [] k = [((0,dt),k)]
 
 -- | Modify the amplitude of a wave by a constant multiple
 setVolume :: Num a => a -> Waveform t a -> Waveform t a
@@ -271,17 +321,56 @@ wackyNotConvolution modf profile w = sampleFrom $ \t -> sample (modulate modf (s
 
 -- | Perform a discrete convolution. The output waveform is @f(t) = \int_{t-tickRadius}^{t+tickRadius} (kernel(t))(x) * w(t+x) dx@
 -- but is discretized such that @x@ is always a multiple of @skipRate@.
-tickConvolution :: Fractional a 
+tickConvolution :: (Show a,Fractional a)
                 => Tick -- ^ @tickRadius@
                 -> Tick -- ^ @skipRate@
                 -> Waveform Tick (Waveform Tick a) -- ^ The kernel of the convolution at each @'Tick'@
                 -> Waveform Tick a -- ^ w(t)
                 -> Waveform Tick a
-tickConvolution tickRadius skipRate profile w = sampleFrom $ \t -> let !kern = sample profile t in sum . map (\dt -> (*stepModifier) . (*sample w (t + dt)) . sample kern $ dt) $ sampleDeltas
+tickConvolution tickRadius skipRate profile w = sampleFrom $ \t -> let !kern = sample profile t in sum . map (\dt -> (*0.01) . (*sample w (t + dt)) . sample kern $ dt) $ sampleDeltas
   where
     sampleDeltas = map (*skipRate) [-stepsPerSide.. stepsPerSide]
     stepsPerSide = tickRadius `div` skipRate
     !stepModifier = realToFrac . recip . fromIntegral $ stepsPerSide
+
+--accuCount :: IORef Integer
+--accuCount = unsafePerformIO $ newIORef 0
+
+-- | This computes a solid slice of a convolution much faster than sampling each point individually by using a convolution cache window.
+fastTickConvolutionFixedKern :: Double -> Tick -> Tick -> Wavetable -> Wavetable -> [Discrete]
+fastTickConvolutionFixedKern tickRate tickStart tickRadius kern w = kern `seq` go (vi,0) tickStart
+  where
+    vi = runST $ do
+      v <- BA.newByteArray (windowSize * 4)
+      forM_ [-tickRadius .. (tickRadius - 1)] $ \dt -> BA.writeByteArray v (1 + tickRadius + dt) (unDiscrete $ sample w (tickStart + dt))
+      BA.unsafeFreezeByteArray v
+    -- Table, breakpoint, offset
+    stepSt :: (BA.ByteArray, Int) -> Tick -> (Discrete, BA.ByteArray)
+    stepSt (!t,!b) o = runST $ do
+      v <- BA.unsafeThawByteArray t
+      BA.writeByteArray v (b `mod` windowSize) (unDiscrete $ sample w (o + tickRadius))
+      let 
+        accu v tot (dt:dts) = do
+          --let !() = unsafePerformIO $ readIORef accuCount >>= \x -> (if x `mod` 10000 == 0 then putStrLn ("accu: " ++ show x) else pure ()) >> writeIORef accuCount (x + 1)
+          let !readIx = (b + tickRadius + dt + 1) `mod` windowSize
+          s <- BA.readByteArray v readIx
+          let !discs = Discrete s
+          let !kernSamp = 0.01 * Discrete (BA.indexByteArray kernel dt)
+          let !toAdd = (0.01 * Discrete (BA.indexByteArray kernel dt)) * Discrete s
+          let !tots = tot + toAdd
+          accu v tots dts
+        accu _ tot [] = pure tot
+      k <- accu v 0 sampleDeltas
+      !v' <- BA.unsafeFreezeByteArray v
+      pure (k,v')
+    go (!t,!b) o = let (s,t') = stepSt (t,b) o in s `seq` (s : go (t',(b+1) `mod` windowSize) (o + 1))
+    --accu :: BA.MutableByteArray s -> Int -> Tick -> Discrete -> Tick -> ST s Discrete
+    windowSize = tickRadius * 2 + 1
+    sampleDeltas = [-tickRadius .. tickRadius]
+    !kernel = runST $ do
+      v <- BA.newByteArray (windowSize * 4)
+      forM_ [-tickRadius .. (tickRadius - 1)] $ \dt -> BA.writeByteArray v (1 + tickRadius + dt) (unDiscrete . (* doubleToDiscrete (recip tickRate)) $ sample kern dt)
+      BA.unsafeFreezeByteArray v
 
 -- | Same as @'tickConvolution'@ but for arbitarily valued waveforms. Works on @'DWave'@ for example.
 sampledConvolution :: (RealFrac t, Fractional a) 
@@ -325,11 +414,10 @@ tickTable :: Double -- ^ Sample rate. Each tick is @1/sampleRate@ seconds
           -> Waveform Double a -> Waveform Tick a
 tickTable tickrate w = sampleFrom $ \t -> sample w (fromIntegral t/tickrate)
 
--- | Tries and fails to optimize a @'Waveform'@ through memoization but actually hangs and eats all your memory.
-tickTableMemo :: Double -> Waveform Double a -> Waveform Tick a
-tickTableMemo tickrate w = sampleFrom $ \t -> if t < 0 then sample w (fromIntegral t/tickrate) else tab IntMap.! (fromIntegral t)
-  where
-    tab = IntMap.fromAscList . map (\k -> (fromIntegral k, sample w (fromIntegral k/tickrate))) $ [0..]
+-- | Discretize the input to a @'Double'@ consuming waveform
+tickTablePer :: Double -- ^ Sample period. Sampling rate is @1/period@
+          -> Waveform Double a -> Waveform Tick a
+tickTablePer per w = sampleFrom $ \t -> sample w (fromIntegral t * per)
 
 -- | A domain- and codomain-discretized @'Waveform'@ suitable for writing to a WAVE file.
 -- See @'waveformToWAVE'@.
@@ -339,14 +427,20 @@ type Wavetable = Waveform Tick Discrete
 -- Used internally.
 data CompactWavetable = CompactWavetable {getWavetable :: Vector.Vector Int32}
 
+fromCompact :: CompactWavetable -> Wavetable
+fromCompact cwt = sampleFrom $ \t -> case getWavetable cwt Vector.!? t of
+  Just d -> Discrete d
+  Nothing -> error "fromCompact Wavetable sampled outside size of compact table"
+
+
 -- | Optimize a @'Wavetable'@ by storing its values in a particular range.
 -- Uses @(tickEnd - tickStart + 1) * sizeOf (_ :: 'Discrete')@ bytes of memory to do this.
 solidSlice :: Tick -> Tick -> Wavetable -> Wavetable
-solidSlice tickStart tickEnd w = sampleFrom $ \t -> case getWavetable cwt Vector.!? (fromIntegral (t-tickStart)) of
+solidSlice tickStart tickEnd w = sampleFrom $ \t -> case getWavetable cwt Vector.!? (t-tickStart) of
   Just d -> Discrete d
   Nothing -> sample w t
   where
-    cwt = CompactWavetable {getWavetable = Vector.generate (fromIntegral $ tickEnd - tickStart + 1) (unDiscrete . sample w . (+tickStart) . fromIntegral)}
+    cwt = CompactWavetable {getWavetable = Vector.generate (tickEnd - tickStart + 1) (unDiscrete . sample w . (+tickStart))}
 
 -- | Optimize a filter by doing @'solidSlice'@ around @t=0@ since those values are sampled repeatedly in a filter
 optimizeFilter :: Tick -> Wavetable -> Wavetable
@@ -370,19 +464,21 @@ skipTicks skipRate w = sampleFrom $ \t -> sample w (skipRate * t)
 
 -- | Optimize a @'Wavetable'@ that we know to be periodic by storing it's values on one period.
 -- Takes @period * sizeOf (_ :: 'Discrete')@ bytes of memory to do this.
+--
+-- Warning: Causes clicking on period boundaries if the period isn't exactly the given value in ticks.
 exploitPeriodicity :: Tick -- ^ Period in @'Tick'@s of the @'Wavetable'@.
                    -> Wavetable -> Wavetable
-exploitPeriodicity period x = sampleFrom $ \t -> case getWavetable cwt Vector.!? (fromIntegral (t `mod` period)) of
+exploitPeriodicity period x = sampleFrom $ \t -> case getWavetable cwt Vector.!? (t `mod` period) of
   Just d -> Discrete d
   Nothing -> sample x t
   where
-    cwt = CompactWavetable {getWavetable = Vector.generate (fromIntegral period) (unDiscrete . sample x . fromIntegral)}
+    cwt = CompactWavetable {getWavetable = Vector.generate period (unDiscrete . sample x)}
 
 -- | Attempts to do a fast fourier transform, but the units of the domain of the output are highly suspect.
 -- May be unreliable, use with caution.
 usingFFT :: Tick -> Wavetable -> Wavetable
 usingFFT tickRadius w = sampleFrom $ \t -> if t < (fromIntegral $ length l)
-  then(!! fromIntegral t) . fmap (doubleToDiscrete . magnitude) $ l
+  then(!! t) . fmap (doubleToDiscrete . magnitude) $ l
   else 0
   where
     l = fft (map ((\x -> discreteToDouble x :+ 0) . sample w) [-tickRadius .. tickRadius])

@@ -3,4 +3,4 @@ module Main where
 import Boopadoop
 import Boopadoop.Example
 
-main = testWave "filteredTicks" filteredTicks
+main = testWaveStream 2 "fastFilteredTicks" $ fastFilteredTicks

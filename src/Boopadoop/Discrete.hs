@@ -21,6 +21,9 @@ discreteToDouble (Discrete x) = fromIntegral x / discFactor
 -- | This is the conversion factor between the internal value of a @'Discrete'@ and the value it represents.
 discFactor :: Num a => a
 discFactor = fromIntegral $ (maxBound :: Int32)
+{-# SPECIALISE discFactor :: Discrete #-}
+{-# SPECIALISE discFactor :: Double #-}
+{-# SPECIALISE discFactor :: Int32 #-}
 
 -- | Round toward zero
 properFloor :: RealFrac a => a -> Int32
@@ -30,7 +33,7 @@ properFloor x = if x >= 0 then floor x else ceiling x
 instance Num Discrete where
   (Discrete a) + (Discrete b) = Discrete $ let s = a + b in if signum a == signum b && signum a /= signum s then error ("Discrete overflow! " ++ show (Discrete a) ++ " + " ++ show (Discrete b) ++ " /= " ++ show (Discrete s)) else s
   a - b = a + negate b
-  (*) = multiplyDiscrete --(Discrete a) * (Discrete b) = Discrete . properFloor $ ((fromIntegral a / discFactor :: Double) * (fromIntegral b :: Double))
+  (*) = unCheckedMultiplyDiscrete
   negate (Discrete a) = Discrete (negate a)
   abs (Discrete a) = Discrete (abs a)
   signum (Discrete a) = Discrete (signum a)
@@ -40,10 +43,22 @@ instance Num Discrete where
 
 -- | Perform fast @'Discrete'@ multiplication.
 multiplyDiscrete :: Discrete -> Discrete -> Discrete
-multiplyDiscrete (Discrete a) (Discrete b) = let m = Discrete . fromIntegral $ ((fromIntegral a :: Int64) * (fromIntegral b :: Int64)) `div` (discFactor + 1) in if signum m /= 0 && signum a * signum b /= signum (unDiscrete m) then error ("Discrete multiply overflow!! " ++ show (Discrete a) ++ " * " ++ show (Discrete b) ++ " /= " ++ show m) else m
+multiplyDiscrete (Discrete a) (Discrete b) = let m = unCheckedMultiplyDiscrete (Discrete a) (Discrete b) in if signum m /= 0 && signum a * signum b /= signum (unDiscrete m) then error ("Discrete multiply overflow!! " ++ show (Discrete a) ++ " * " ++ show (Discrete b) ++ " /= " ++ show m) else m
+
+fastIncorrectMultiplyDiscrete :: Discrete -> Discrete -> Discrete
+fastIncorrectMultiplyDiscrete (Discrete a) (Discrete b) = Discrete . fromIntegral $ ((fromIntegral (a `shiftR` 16) :: Int16) * (fromIntegral (b `shiftR` 16) :: Int16)) `shiftL` 16
+
+unCheckedMultiplyDiscrete :: Discrete -> Discrete -> Discrete
+unCheckedMultiplyDiscrete (Discrete a) (Discrete b) = Discrete . fromIntegral $ ((fromIntegral a :: Int64) * (fromIntegral b :: Int64)) `div` (discFactor + 1)
+
+unCheckedDivideDiscrete :: Discrete -> Discrete -> Discrete
+unCheckedDivideDiscrete (Discrete a) (Discrete b) = Discrete . fromIntegral $ ((fromIntegral a :: Int64) * (discFactor + 1)) `div` fromIntegral b
+
+divideDiscrete :: Discrete -> Discrete -> Discrete
+(Discrete a) `divideDiscrete` (Discrete b) = let d = unCheckedDivideDiscrete (Discrete a) (Discrete b) in if signum d /= 0 && signum a * signum b /= signum (unDiscrete d) then error ("Discrete division overflow!! " ++ show (Discrete a) ++ " / " ++ show (Discrete b) ++ " /= " ++ show d) else d
 
 instance Fractional Discrete where
-  (Discrete a) / (Discrete b) = let d = Discrete . fromIntegral $ ((fromIntegral a :: Int64) * (discFactor + 1)) `div` fromIntegral b in if signum d /= 0 && signum a * signum b /= signum (unDiscrete d) then error ("Discrete division overflow!! " ++ show (Discrete a) ++ " / " ++ show (Discrete b) ++ " /= " ++ show d) else d
+  (/) = unCheckedDivideDiscrete
   fromRational r = if r <= 1 && r >= -1
     then Discrete . properFloor $ discFactor * r
     else error $ "(fromRational " ++ show r ++ " :: Discrete)"
@@ -57,10 +72,7 @@ disguise :: (Double -> Double) -> Discrete -> Discrete
 disguise f (Discrete x) = Discrete . properFloor $ f (fromIntegral x / discFactor :: Double) * discFactor
 
 -- | A discrete representation of time. See @'Boopadoop.tickTable'@ for the sampling rate.
-newtype Tick = Tick {unTick :: Int32} deriving (Enum,Num,Ord,Eq,Real,Integral)
-
-instance Show Tick where
-  show (Tick a) = "Tick[" ++ show a ++ "]"
+type Tick = Int
 
 --cisDiscrete :: Double -> Complex Discrete
 --cisDiscrete t = let (a :+ b) = cis t in doubleToDiscrete a :+ doubleToDiscrete b

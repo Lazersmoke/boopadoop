@@ -3,10 +3,16 @@ module Boopadoop.Interval where
 
 import Boopadoop.Diagram
 
-fromMajorScale :: Integer -> PitchFactorDiagram
-fromMajorScale k = addPFD (scalePFD o octave) ([unison,majorSecond,majorThird,perfectFourth,perfectFifth,majorSixth,majorSeventh,octave]!! fromIntegral i)
+fromMajorScale :: Int -> PitchFactorDiagram
+fromMajorScale = fromPitchList [unison,majorSecond,majorThird,perfectFourth,perfectFifth,majorSixth,majorSeventh]
+
+fromDiatonic :: Int -> PitchFactorDiagram
+fromDiatonic = fromPitchList [unison,minorSecond,majorSecond,minorThird,majorThird,perfectFourth,tritone,perfectFifth,minorSixth,majorSixth,minorSeventh,majorSeventh]
+
+fromPitchList :: [PitchFactorDiagram] -> Int -> PitchFactorDiagram
+fromPitchList ps k = addPFD (scalePFD (fromIntegral o) octave) (ps!! i)
   where
-    (o,i) = k `divMod` 12
+    (o,i) = k `divMod` length ps
 
 -- | The non interval, ratio is 1. Identity of `addPFD`.
 unison :: PitchFactorDiagram
@@ -28,17 +34,25 @@ perfectFifth = normalizePFD $ Factors [0,1]
 majorThird :: PitchFactorDiagram
 majorThird = normalizePFD $ Factors [0,0,1]
 
--- | Interval of a minor third 5:4
+-- | Interval of a minor third 6:5
 minorThird :: PitchFactorDiagram
 minorThird = normalizePFD $ addPFD perfectFifth (invertPFD majorThird)
 
--- | Interval of a major sixth 5:4
+-- | Interval of a minor sixth 8:5
+minorSixth :: PitchFactorDiagram
+minorSixth = normalizePFD . invertPFD $ majorThird
+
+-- | Interval of a major sixth 5:3
 majorSixth :: PitchFactorDiagram
-majorSixth = normalizePFD . invertPFD $ majorThird
+majorSixth = normalizePFD . invertPFD $ minorThird
 
 -- | Interval 7:4
 harmonicSeven :: PitchFactorDiagram
 harmonicSeven = normalizePFD $ Factors [0,0,0,1]
+
+-- | Interval of a major seventh 16:9
+minorSeventh :: PitchFactorDiagram
+minorSeventh = normalizePFD $ Factors [0,-2]
 
 -- | Interval of a major seventh 15:8
 majorSeventh :: PitchFactorDiagram
@@ -56,6 +70,12 @@ majorSecond = normalizePFD $ Factors [0,2]
 mystery25 :: PitchFactorDiagram
 mystery25 = normalizePFD $ Factors [0,0,2]
 
+tritone :: PitchFactorDiagram
+tritone = countPFDFuzzy $ sqrt 2
+
+majorScale :: [PitchFactorDiagram]
+majorScale = fmap fromMajorScale [0..11]
+
 -- | Interval 199:200. Should be mostly consonant to your ear but has non-small PFD:
 -- @
 --  [-3,0,-2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]
@@ -68,3 +88,11 @@ majorChord = chordOf [unison,majorThird,perfectFifth]
 
 minorChord :: Chord
 minorChord = chordOf [unison,minorThird,perfectFifth]
+
+fphRanges :: [[PitchFactorDiagram]]
+fphRanges = fmap (fmap fromDiatonic) [bass,tenor,alto,soprano]
+  where
+    soprano = [0..19]
+    alto = [-5..12]
+    tenor = [-12..7]
+    bass = [-19..0]

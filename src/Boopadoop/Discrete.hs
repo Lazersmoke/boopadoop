@@ -4,6 +4,8 @@ module Boopadoop.Discrete where
 import Data.Int
 import Data.Bits
 
+data Stream a = Stream !a (Stream a)
+
 -- | @'Discrete' x@ represents @x/'discFactor'@ as a floating point number in [-1,1].
 newtype Discrete = Discrete {unDiscrete :: Int32} deriving (Eq,Ord)
 

@@ -3,12 +3,17 @@
 -- | Representing rhythms as rose trees.
 module Boopadoop.Rhythm where
 
-import Data.Numbers.Primes
-import Data.List.Split
+import Data.Tree
 
 -- | A rhythm is represented as a rose tree where each subtree is given time with integer weights.
 -- Leaves are any data.
 data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
+
+viewBeat :: Show a => Beat a -> String
+viewBeat beat = drawTree . toTree $ fmap show beat
+  where
+    toTree (RoseBeat bs) = Node "RoseBeat" (fmap (\(_,a) -> toTree a) bs)
+    toTree (Beat b) = Node ("Beat: " ++ show b) []
 
 --analyzeBeat :: SummaryChar a => Beat a -> String
 --analyzeBeat (RoseBeat bs) = show $ fmap (\(k,b) -> (k,analyzeBeat b)) $ bs
@@ -79,3 +84,5 @@ primeBeat (RoseBeat bs)
   | otherwise = let (pf:_) = reverse $ primeFactors (length bs) in primeBeat . RoseBeat . map RoseBeat $ chunksOf pf bs
 primeBeat x = x
 -}
+
+

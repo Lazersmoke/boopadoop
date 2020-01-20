@@ -31,7 +31,7 @@ takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allS
 newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Eq
 
 instance Show PitchFactorDiagram where
-  show pfd = show (diagramToRatio pfd) ++ " {" ++ show (getFactors pfd) ++ "}"
+  show pfd = show (diagramToRatio pfd) ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
 
 instance Ord PitchFactorDiagram where
   compare a b = compare (diagramToRatio a) (diagramToRatio b)
@@ -112,6 +112,12 @@ printTheSequence k
 
 newtype Chord = Chord {getNotes :: Set.Set PitchFactorDiagram}
 
+instance SummaryChar Chord where
+  sumUp = head . show . chordSize
+
+chordSize :: Chord -> Int
+chordSize = Set.size . getNotes
+
 chordOf :: [PitchFactorDiagram] -> Chord
 chordOf = Chord . Set.fromList
 
@@ -131,8 +137,26 @@ invChrd :: Int -> Chord -> Chord
 invChrd 0 c = c
 invChrd k (Chord c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (Chord $ Set.insert (addPFD (Factors [1]) p) c')
 
+voiceChord :: [Int] -> Chord -> Chord
+voiceChord voicing c = if maximum voicing < chordSize c
+  then let ps = Set.toList (getNotes c) in Chord . foldl z Set.empty . map (\k -> ps !! k) $ voicing
+  else error $ "voiceChord " ++ show voicing ++ " called on chord " ++ show c ++ " of size " ++ show (chordSize c)
+  where
+    z s p = if (\m -> case m of {Just _ -> True; Nothing -> False}) (Set.lookupGE p s) then z s (addPFD (Factors [1]) p) else Set.insert p s
+
+closedFPH :: Int -> Chord -> Chord
+closedFPH = closedFPHOver 0
+
+closedFPHOver :: Int -> Int -> Chord -> Chord
+closedFPHOver bass ov c = if chordSize c >= 3
+  then voiceChord [bass,ov,(ov + 1) `mod` 3, (ov + 2) `mod` 3] c
+  else error $ "closedFPHOver chord of size " ++ show (chordSize c)
+
 instance Show Chord where
-  show (Chord c) = unlines $ ["/="] ++ fmap show (Set.toList c) ++ ["\\="]
+  show c = "<" ++ (init . tail . show . chordPitches $ c) ++ ">"
+
+prettyShowChord :: Chord -> String
+prettyShowChord (Chord c) = init . unlines $ ["/="] ++ fmap show (Set.toList c) ++ ["\\="]
 
 consonantHalfway :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
 consonantHalfway x y = countPFDFuzzy $ num/denom
@@ -140,3 +164,4 @@ consonantHalfway x y = countPFDFuzzy $ num/denom
     num = diagramToRatio y - diagramToRatio x
     --denom = sum $ zipWith (\a b -> fromIntegral a * log (fromIntegral b)) (zipWith (-) (getFactors y) (getFactors x ++ repeat 0)) primes
     denom = log $ diagramToRatio $ addPFD y (invertPFD x)
+

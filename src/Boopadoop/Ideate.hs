@@ -1,8 +1,14 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE GADTs #-}
 module Boopadoop.Ideate where
 
 import Boopadoop
-import Data.Permute
 import qualified Data.Set as Set
 import Debug.Trace
 
@@ -64,6 +70,7 @@ composeSlurred time slurs (RoseBeat bs) = sampleFrom $ \t -> sampleIn slurs bs t
     sampleIn sls ((k,b):xs) t
       | t <= k * curBeatTicks = sample (composeSlurred (k * curBeatTicks) sls b) t
       | otherwise = let (_,sls') = sample (composeSlurred (k * curBeatTicks) sls b) (k * curBeatTicks) in sampleIn sls' xs (t - k * curBeatTicks)
+    sampleIn sls [] t = error ("Sampled past end of `composeSlurred` wavetable by " ++ show t ++ " ticks with curBeatTicks=" ++ show curBeatTicks ++ " and sls=" ++ show sls)
     curSubdivs = sum . fmap fst $ bs
     curBeatTicks = time `quotRoundUp` curSubdivs
 
@@ -73,6 +80,23 @@ streamSlurs time (RoseBeat bs) = snd . foldl (\(k',xs) (k,w) -> (k+k',holdAndZip
   where
     curSubdivs = sum . fmap fst $ bs
     curBeatTicks = time `quotRoundUp` curSubdivs
+
+envelopeSlurs :: Tick -> Beat (Envelope Tick Discrete,Wavetable) -> [Discrete]
+envelopeSlurs time (Beat expw) = envSlur time expw
+envelopeSlurs time (RoseBeat bs) = snd . foldl (\(k',xs) (k,w) -> (k+k',holdAndZip (k' * curBeatTicks) (+) xs (envelopeSlurs (k * curBeatTicks) w))) (0,repeat 0) $ bs
+  where
+    curSubdivs = sum . fmap fst $ bs
+    curBeatTicks = time `quotRoundUp` curSubdivs
+
+envSlur :: Tick -> (Envelope Tick Discrete,Wavetable) -> [Discrete]
+envSlur noteDuration (e@(Envelope _ _ _ _ _ rel),w) = go 0
+  where
+    env = susEnvelope e noteDuration
+    w' = amplitudeModulate env w
+    go :: Tick -> [Discrete]
+    go tNow = if tNow < rel + noteDuration
+      then sample w' tNow : go (tNow + 1)
+      else []
 
 slurOut :: (Tick,Wavetable) -> [Discrete]
 slurOut (tExp,w) = go 0
@@ -84,7 +108,7 @@ slurOut (tExp,w) = go 0
 
 holdAndZip :: Int -> (a -> b -> a) -> [a] -> [b] -> [a]
 --holdAndZip k as = zipWith (+) (replicate k 0 ++ as)
-holdAndZip k f (a:as) bs = if k > 0
+holdAndZip !k f (a:as) bs = if k > 0
   then a : holdAndZip (k - 1) f as bs
   else zipWithNoTrunc f as bs
 holdAndZip _ _ [] _ = error "holdAndZip on empty list"
@@ -96,6 +120,13 @@ zipWithNoTrunc _ [] _ = error "zipWithNoTrunc out of as"
 
 freshSlurs :: Tick -> Beat (Tick,Wavetable) -> Wavetable
 freshSlurs time b = fmap fst $ composeSlurred time [] b
+
+composeWithSlurs :: Tick -> Tick -> Beat Wavetable -> [Discrete]
+composeWithSlurs slurTimeout time = streamSlurs time . fmap (slurTimeout,)
+
+composeWithEnvelope :: Envelope Tick Discrete -> Tick -> Beat Wavetable -> [Discrete]
+composeWithEnvelope env time = envelopeSlurs time . fmap (env,)
+
 
 -- At a given tick, mix the given slurs. Remove any expired slurs.
 addSlurs :: Tick -> [(Tick,Wavetable)] -> (Discrete,[(Tick,Wavetable)])
@@ -132,3 +163,60 @@ sampleMelody = RoseBeat
 
 toConcreteKey :: Double -> Beat PitchFactorDiagram -> Beat Double
 toConcreteKey root = fmap (($ root) . intervalOf)
+
+fromTabWithTuning :: [Double] -> [Int] -> [Double]
+fromTabWithTuning = zipWith (\t f -> t * (semi ** fromIntegral f))
+
+
+makeChoice :: String -> [k] -> (k -> a) -> (Int -> a)
+makeChoice _ xs f i = f $ xs !! i
+
+--stuff' :: Finite 3 -> Double
+--stuff' = makeChoice "num" (ListCons 1 (ListCons 2 (ListCons (3 :: Double) ListNil))) $ \t -> 2 * t
+-- Variations monad
+-- stuff = do
+--   a <- Variations "num" [1,2,3]
+--   pure $ 2 * a
+--
+--
+--  >>> variate stuff "num" 0
+--  2
+{-
+stuff :: Variations ('ListCons ('S ('S ('S 'Z))) 'ListNil) ('ListCons Int 'ListNil) Int
+stuff = RequireChoice (ListCons 1 $ ListCons 2 $ ListCons 3 $ ListNil) $ \t -> VariationsPure $ 2 * t
+
+variate :: Variations ('ListCons k ks) ('ListCons t ts) a -> SFin k -> Variations ks ts a
+variate (RequireChoice (ListCons x _) vf) SO = vf x
+variate (RequireChoice (ListCons _ xs) vf) (SS n) = variate (RequireChoice xs vf) n
+variate (RequireChoice ListNil _) _ = error "Unreachable because the index is uninhabited"
+
+unVariate :: Variations 'ListNil 'ListNil a -> a
+unVariate (VariationsPure a) = a
+
+data Fin = S Fin | Z
+
+data SFin (k :: Fin) where
+  SO :: SFin ('S 'Z)
+  SS :: SFin n -> SFin ('S n)
+
+instance Num (SFin k) where
+  fromInteger k = if k > 1
+    then SS (fromInteger (k - 1))
+    else SO
+
+data Variations (ks :: List n Fin) (ts :: List n *) (a :: *) where
+  VariationsPure :: a -> Variations 'ListNil 'ListNil a
+  RequireChoice :: List len t -> (t -> Variations ks ts a) -> Variations ('ListCons len ks) ('ListCons t ts) a
+
+instance Functor (Variations ks ts) where
+  fmap f (VariationsPure x) = VariationsPure $ f x
+  fmap f (RequireChoice cs v) = RequireChoice cs $ fmap (fmap f) v
+
+--instance Applicative (Variations ts) where
+  --pure = VariationsPure
+  --(<*>) :: Variations ts (a -> b) -> Variations ts a -> Variations ts b
+  --VariationsPure f <*> vx = fmap f vx
+  --RequireChoice f <*> vx = fmap f vx
+
+--instance Monad (Variations ts) where
+-}

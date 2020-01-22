@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
@@ -23,7 +24,7 @@ import Data.Int
 import Data.Complex
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
-import Debug.Trace
+--import Debug.Trace
 
 -- | A 'Waveform' is a function (of time) that we can later sample.
 newtype Waveform t a = Waveform 
@@ -158,7 +159,7 @@ changeSpeed startTime lerpTime newSpeed wave = sampleFrom $ \t -> sample wave $ 
 
 -- | Play several waves on top of each other, normalizing so that e.g. playing three notes together doesn't triple the volume.
 balanceChord :: Fractional a => [Waveform t a] -> Waveform t a
-balanceChord notes = sampleFrom $ \t -> sum . map ((* (realToFrac . recip . fromIntegral . length $ notes)) . sampleAt t) $ notes
+balanceChord notes = sampleFrom $ \t -> sum . map ((* (realToFrac . recip @Double . fromIntegral . length $ notes)) . sampleAt t) $ notes
 
 -- | Play several waves on top of each other, without worrying about the volume. See 'balanceChord' for
 -- a normalized version.
@@ -265,6 +266,26 @@ concertA :: Num a => a
 concertA = 440
 
 -- | Build an envelope waveform with the given parameters: Predelay Time, Attack Time, Hold Time, Decay Time, Sustain Level, Release Time
+--envelope :: Envelope Double Double -> DWave
+--envelope e@(Envelope del att hol dec _ _) = susEnvelope e (del + att + hol + dec)
+
+susEnvelope :: Envelope Tick Discrete -> Tick -> Wavetable
+susEnvelope (Envelope del att hol dec sus rel) noteDuration = sampleFrom $ \t -> if t < del
+  then 0
+  else if t - del < att
+    then doubleToDiscrete $ (t - del) `divTD` att
+    else if t - del - att < hol
+      then 1
+      else if t - del - att - hol < dec
+        then doubleToDiscrete $ 1 + ((t - del - att - hol) `divTD` dec) * (discreteToDouble sus - 1)
+        else if t < noteDuration
+          then sus
+          else if t - noteDuration < rel
+            then sus * doubleToDiscrete (1 - (t - noteDuration) `divTD` rel)
+            else 0
+  where
+    divTD a b = fromIntegral a / fromIntegral b
+
 envelope :: Double -> Double -> Double -> Double -> Double -> Double -> DWave
 envelope del att hol dec sus rel = sampleFrom $ \t -> if t < del
   then 0
@@ -277,6 +298,13 @@ envelope del att hol dec sus rel = sampleFrom $ \t -> if t < del
         else if t - del - att - hol - dec < rel
           then sus * (1 - (t - del - att - hol - dec)/rel)
           else 0
+
+data Envelope a b = Envelope a a a a b a
+
+discretizeEnvelope :: Double -> Envelope Double Double -> Envelope Tick Discrete
+discretizeEnvelope tickRate (Envelope del att hol dec sus rel) = Envelope (dd del) (dd att) (dd hol) (dd dec) (doubleToDiscrete sus) (dd rel)
+  where
+    dd = floor . (*tickRate)
 
 -- | Shift a wave in time to start at the specified time after its old start time
 timeShift :: Num t => t -> Waveform t a -> Waveform t a

@@ -4,16 +4,25 @@
 module Boopadoop.Rhythm where
 
 import Data.Tree
+import Debug.Trace
 
 -- | A rhythm is represented as a rose tree where each subtree is given time with integer weights.
 -- Leaves are any data.
 data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
 
-viewBeat :: Show a => Beat a -> String
-viewBeat beat = drawTree . toTree $ fmap show beat
+viewBeat :: Beat String -> String
+viewBeat beat = drawTree . toTree $ beat
   where
-    toTree (RoseBeat bs) = Node "RoseBeat" (fmap (\(_,a) -> toTree a) bs)
-    toTree (Beat b) = Node ("Beat: " ++ show b) []
+    toTree (RoseBeat bs) = Node "RoseBeat" (fmap (\(k,a) -> fmap (("." ++ show k)++) $ toTree a) bs)
+    toTree (Beat b) = Node ("Beat: " ++ b) []
+
+flattenTimes :: (Beat a -> Beat a) -> Beat a -> Beat a
+flattenTimes _ (Beat a) = Beat a
+flattenTimes hf (RoseBeat xs) = RoseBeat $ concatMap (\(k,w) -> (1,flattenTimes hf w) : replicate (k-1) (1,hf (flattenTimes hf w))) xs
+
+beatList :: Beat a -> [a]
+beatList (Beat a) = [a]
+beatList (RoseBeat xs) = concatMap (beatList . snd) xs
 
 --analyzeBeat :: SummaryChar a => Beat a -> String
 --analyzeBeat (RoseBeat bs) = show $ fmap (\(k,b) -> (k,analyzeBeat b)) $ bs
@@ -54,6 +63,14 @@ instance SummaryChar () where
 
 -- | A rack of drums. Simple enumeration of the different possible drum types.
 data DrumRack = Kick | Snare
+
+weightTimes :: [Beat a] -> Beat a
+weightTimes bs = RoseBeat $ zip (fmap (`div` tot) ts) bs
+  where
+    ts = fmap getTime $ bs
+    tot = traceShowId $ product ts
+    getTime (Beat _) = 1
+    getTime (RoseBeat xs) = min 1 $ sum . fmap fst $ xs
 
 equalTime :: [Beat a] -> Beat a
 equalTime = RoseBeat . fmap (1,)

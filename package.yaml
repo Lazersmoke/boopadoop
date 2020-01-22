@@ -28,6 +28,7 @@ dependencies:
 - containers
 - permutation
 - primitive
+- finite-typelits
 
 library:
   source-dirs: 

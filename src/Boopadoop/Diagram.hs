@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 -- | Tools for creating and manipulation Pitch Factor Diagrams, a tool for representing musical 
 -- intervals and examining their relations.
 module Boopadoop.Diagram where
@@ -31,13 +32,13 @@ takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allS
 newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Eq
 
 instance Show PitchFactorDiagram where
-  show pfd = show (diagramToRatio pfd) ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
+  show pfd = show (diagramToRatio @Double pfd) ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
 
 instance Ord PitchFactorDiagram where
-  compare a b = compare (diagramToRatio a) (diagramToRatio b)
+  compare a b = compare @Double (diagramToRatio a) (diagramToRatio b)
 
 instance SummaryChar PitchFactorDiagram where
-  sumUp pfd = "0123456789ab" !! ((`mod` 12) . floor $ diagramToSemi pfd)
+  sumUp pfd = "0123456789ab" !! ((`mod` 12) . floor $ diagramToSemi @Double pfd)
 
 -- | 'mempty' is the unison PFD, with ratio @1@.
 instance Monoid PitchFactorDiagram where
@@ -52,24 +53,24 @@ instance Semigroup PitchFactorDiagram where
 --  diagramToRatio (Factors [4,2,-3]) = (2 ^^ 4) * (3 ^^ 2) * (5 ^^ (-3)) = 144/125
 -- @
 diagramToRatio :: Fractional a => PitchFactorDiagram -> a
-diagramToRatio = product . zipWith (^^) (map fromIntegral primes) . getFactors
+diagramToRatio = product . zipWith (^^) (map fromIntegral (primes @Int)) . getFactors
 
 -- | Similar to 'diagramToRatio', but simplifies the resulting ratio to the simplest ratio within @0.05@.
 diagramToFloatyRatio :: PitchFactorDiagram -> Rational
-diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio
+diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio @Double
 
 -- | Convert a PFD to its decimal number of semitones. Useful for approximating weird ratios in a twelvetone scale:
 -- @
 --  diagramToSemi (normalizePFD $ Factors [0,0,0,1]) = diagramToSemi (countPFD (7/4)) = 9.688259064691248
 -- @
 diagramToSemi :: Floating a => PitchFactorDiagram -> a
-diagramToSemi = (12 *) . logBase 2 . realToFrac . diagramToRatio . normalizePFD
+diagramToSemi = (12 *) . logBase 2 . diagramToRatio . normalizePFD
 
 -- | Normalize a PFD by raising or lowering it by octaves until its ratio lies between @1@ (unison) and @2@ (one octave up).
 -- This operation is idempotent.
 normalizePFD :: PitchFactorDiagram -> PitchFactorDiagram
 normalizePFD (Factors []) = Factors []
-normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . realToFrac . diagramToRatio . Factors . (0:) $ xs) : xs
+normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . diagramToRatio @Double . Factors . (0:) $ xs) : xs
 
 -- | Same as 'countPFD' but makes an effort to simplify the ratio from a 'Double' slightly to the simplest rational number within @0.0001@.
 countPFDFuzzy :: Double -> PitchFactorDiagram
@@ -83,10 +84,11 @@ countPFD k = Factors $ go (primeFactors $ numerator k,primeFactors $ denominator
     go :: ([Integer],[Integer]) -> [Integer] -> [Integer]
     go ([],[]) _ = []
     go (nfs,dfs) (p:ps) = count (==p) nfs - count (==p) dfs : go (filter (/=p) nfs,filter (/=p) dfs) ps
+    go _ [] = error "The primes ended"
 
 -- | Converts a PFD into an operation on frequencies. @'intervalOf' 'Boopadoop.Interval.perfectFifth' 'Boopadoop.concertA'@ is the just intonation E5.
 intervalOf :: PitchFactorDiagram -> (Double -> Double)
-intervalOf = (*) . (realToFrac . diagramToRatio)
+intervalOf = (*) . (diagramToRatio)
 
 -- | Scale a PFD by raising the underlying ratio to the given power. @'scalePFD' 2 'Boopadoop.Interval.perfectFifth' = 'addPFD' 'Boopadoop.Interval.octave' 'Boopadoop.Interval.majorSecond'@
 scalePFD :: Integer -> PitchFactorDiagram -> PitchFactorDiagram

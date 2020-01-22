@@ -79,3 +79,5 @@ type Tick = Int
 --cisDiscrete :: Double -> Complex Discrete
 --cisDiscrete t = let (a :+ b) = cis t in doubleToDiscrete a :+ doubleToDiscrete b
 
+computeExternally :: (Double -> Double) -> Discrete -> Discrete
+computeExternally f = doubleToDiscrete . f . discreteToDouble

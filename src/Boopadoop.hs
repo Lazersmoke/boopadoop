@@ -24,7 +24,7 @@ import Data.Int
 import Data.Complex
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
---import Debug.Trace
+import Debug.Trace
 
 -- | A 'Waveform' is a function (of time) that we can later sample.
 newtype Waveform t a = Waveform 
@@ -70,6 +70,15 @@ instance Show (Waveform Tick Discrete) where
         then replicate (quantLevel - k) '.' ++ "x" ++ replicate (quantLevel + k) '.'
         else let m = "k = " ++ show k in m ++ replicate (quantLevel * 2 + 1 - length m) ' '
       waveSamples = map ((`quotRoundUp` (1 + (discFactor `quot` quantLevel))) . fromIntegral . unDiscrete . sample (skipTicks 1 w)) [0 .. 115]
+      quantLevel = 15 :: Int
+
+instance Show (Waveform Tick Double) where
+  show w = intercalate "\n" . transpose $ map sampleToString waveSamples
+    where
+      sampleToString k = if k <= quantLevel && k >= -quantLevel
+        then replicate (quantLevel - k) '.' ++ "x" ++ replicate (quantLevel + k) '.'
+        else let m = "k = " ++ show k in m ++ replicate (quantLevel * 2 + 1 - length m) ' '
+      waveSamples = map (floor . (* realToFrac quantLevel) . sample (skipTicks 1 w)) [0 .. 115]
       quantLevel = 15 :: Int
 
 -- | A version of @'quot'@ that rounds away from zero instead of towards it.
@@ -118,15 +127,53 @@ amplitudeModulate = modulate (*)
 freqModulate :: Waveform t' p -> Waveform p a -> Waveform t' a
 freqModulate phaseSelect w = sampleFrom $ \t -> sample w (sample phaseSelect t)
 
+-- | First argument is valued in sample time steps, so @1/stdtr@ is a good starting point.
 emuVCO :: Waveform Tick Double -> Waveform Double a -> [a]
 emuVCO freqSelect w = go 0 0
   where
-    go i sampPoint = let skip = sample freqSelect i in sample w sampPoint : go (i + 1) (sampPoint + skip)
+    go !i sampPoint = let skip = sample freqSelect i in sample w sampPoint : go (i + 1) (sampPoint + skip)
+
+emuVCO' :: [Double] -> Waveform Double a -> [a]
+emuVCO' fs w = go fs 0
+  where
+    go freqSelect sampPoint = let (skip:ss) = freqSelect in sample w sampPoint : go ss (sampPoint + skip)
+
+niceVCO :: Double -> [Double] -> Waveform Double a -> [a]
+niceVCO amp fs = emuVCO' (fmap (\f -> (amp ** f)/stdtr) fs)
+
+oscAboveZero :: Double -> Double -> Double
+oscAboveZero amp = oscAbout (amp/2) amp
+
+oscAbout :: Double -> Double -> Double -> Double
+oscAbout z0 amp z = (amp * z) + z0
+
+-- | Piecewise linear reconstruction (interpolation) of a sampled signal
+linearResample :: Double -> Waveform Tick Double -> Waveform Double Double
+linearResample sampleRate w = sampleFrom $ \t -> do
+  let t' = t * sampleRate
+  let (low,high) = (floor t',ceiling t')
+  (fromIntegral high - t') * sample w low + (t' - fromIntegral low) * sample w high
 
 recordStream :: [a] -> Waveform Tick a
 recordStream xs = sampleFrom ((xs!!) . fromIntegral)
 
-streamWavetable :: Wavetable -> [Discrete]
+-- | The output wavetables here have @sample (toConvolutionTableStream ds !! t) k = ds !! (t - k)@ for @k < windowSize@
+toConvolutionTableStream :: Tick -> [Discrete] -> [Wavetable]
+toConvolutionTableStream windowSize xs = fmap toWavetable . scanl stepSt (startTable xs) $ xs
+  where
+    toWavetable :: (BA.ByteArray,Int) -> Wavetable
+    toWavetable (v,b) = sampleFrom $ \k -> Discrete $ BA.indexByteArray v ((b - k) `mod` windowSize)
+    startTable :: [Discrete] -> (BA.ByteArray,Int)
+    startTable ds = (BA.byteArrayFromListN windowSize (fmap unDiscrete $ take windowSize ds),0)
+    -- Table, breakpoint
+    stepSt :: (BA.ByteArray, Int) -> Discrete -> (BA.ByteArray, Int)
+    stepSt (!t,!b) x = runST $ do
+      v <- BA.unsafeThawByteArray t
+      BA.writeByteArray v (b `mod` windowSize) (unDiscrete x)
+      v' <- BA.unsafeFreezeByteArray v
+      pure (v',(b+1) `mod` windowSize)
+
+streamWavetable :: Waveform Tick a -> [a]
 streamWavetable w = map (sample w) [0..]
 
 memorizeStream :: Int -> [Discrete] -> Wavetable
@@ -195,12 +242,24 @@ wavestreamToWAVE outTicks sampleRate ws = WAVE.WAVE
 
 
 -- | Triangle wave of the given frequency
-triWave :: (Ord a,RealFrac a) => a -> Waveform a a
-triWave f = sampleFrom $ \t -> let r = (t * f) - fromIntegral (floor (t * f) :: Int) in if r < 0.25
+triWave :: Double -> Waveform Double Double
+triWave f = sampleFrom $ \t -> let r = t * f - fromIntegral (floor (t * f) :: Int) in if r < 0.25
   then 4 * r
   else if r < 0.75
     then 2 - (4 * r)
     else -4 + (4 * r)
+
+sawWave :: Double -> Waveform Double Double
+sawWave f = sampleFrom $ \t -> 2 * (t * f - fromIntegral (floor (t * f) :: Int)) - 1
+
+ramp :: Double -> Double -> Double
+ramp = rampFrom 0
+
+rampFrom :: Double -> Double -> Double -> Double
+rampFrom x0 time t = if t < time
+  then x0 + (1 - x0) * (max t 0)/time
+  else 1
+
 
 -- | Arbitrarily chosen standard tick rate, used in @'testWave'@
 stdtr :: Num a => a
@@ -237,7 +296,7 @@ sequenceNotes = mergeWaves . map (\(t,w) -> modulate muting (compactWave t) $ ti
 -- @
 --  buildChord ratios root
 -- @
-buildChord :: (Num a,RealFrac a) => [a] -> a -> Waveform a a
+buildChord :: [Double] -> Double -> Waveform Double Double
 buildChord relPitches root = balanceChord $ map (triWave . (root *)) relPitches
 
 -- | Builds a chord out of the given ratios relative to the root pitch, without normalizing the volume.
@@ -285,6 +344,17 @@ susEnvelope (Envelope del att hol dec sus rel) noteDuration = sampleFrom $ \t ->
             else 0
   where
     divTD a b = fromIntegral a / fromIntegral b
+
+suspendVelope :: Double -> Double -> Double -> Double -> Double -> DWave
+suspendVelope del att hol dec sus = sampleFrom $ \t -> if t < del
+  then 0
+  else if t - del < att
+    then (t - del) / att
+    else if t - del - att < hol
+      then 1
+      else if t - del - att - hol < dec
+        then 1 + (t - del - att - hol)/dec * (sus - 1)
+        else sus
 
 envelope :: Double -> Double -> Double -> Double -> Double -> Double -> DWave
 envelope del att hol dec sus rel = sampleFrom $ \t -> if t < del
@@ -410,6 +480,30 @@ bandpassFilter bandCenter bandSize = sampleFrom $ \t -> if t == 0 then 1 else re
   where
     !bandFreq = 2 * pi * bandSize
     !centerFreq = 2 * pi * bandCenter
+
+type FilterParams = (Double,Double,Double)
+
+ladderFilter :: Double -> [Double] -> [Double] -> [Double] -> [(Double,Double,Double,Double)]
+ladderFilter sampleRate reso cutoffs inputs = scanl stepSt (1e-6,2e-6,0,0) $ zip3 reso cutoffs inputs
+  where
+    fmapTup f (!a,!b,!c,!d) = (f a,f b,f c,f d)
+    zipTup f (!a,!b,!c,!d) (!a',!b',!c',!d') = (f a a',f b b',f c c',f d d')
+    h = 1/sampleRate
+    rkf (r,c,i) (x1,x2,x3,x4) = {-trace ("rkf(" ++ show r ++ ", " ++ show c ++ ", " ++ show i ++ ")") $-} let cut = 2 * pi * c in (cut * (i - r * x3 - x1),cut * (x1 - x2),cut * (x2 - x3),cut * (x3 - x4))
+    stepSt x i = let
+      k1 = fmapTup (h *) $ rkf i x
+      k2 = fmapTup (h *) $ rkf i (zipTup (\k xi -> xi + k/2) k1 x)
+      k3 = fmapTup (h *) $ rkf i (zipTup (\k xi -> xi + k/2) k2 x)
+      k4 = fmapTup (h *) $ rkf i (zipTup (+) k3 x)
+      in zipTup (\xi ki -> xi + ki/6) x $ zipTup (+) (zipTup (+) (fmapTup (*2) k2) (fmapTup (*2) k3)) (zipTup (+) k1 k4)
+
+scaledDrive :: Double -> Double
+scaledDrive drv = (1 + drv) ** 5
+
+lowPassFilter :: Double -> [Double] -> [Double] -> [Double] -> [Double]
+lowPassFilter rate res cut = fmap (\(_,_,_,d) -> d) . ladderFilter rate res cut
+
+
 
 {-
 sampledConvolve modf profile w = sampleFrom $ \p -> modf (sample (sample profile p) p) (sample w p)

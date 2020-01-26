@@ -61,7 +61,7 @@ metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discr
     env = envelope 0 0.01 0.07 0.01 0.5 0.005
 
 listenWavestream :: [Discrete] -> IO ()
-listenWavestream w = WAVE.putWAVEFile "listenWavestream.wav" (wavestreamToWAVE (stdtr * 14) stdtr w)
+listenWavestream w = WAVE.putWAVEFile "listenWavestream.wav" (wavestreamToWAVE (stdtr * 5) stdtr w)
 
 listenWavetable :: Wavetable -> IO ()
 listenWavetable w = print w >> WAVE.putWAVEFile "listenWavetable.wav" (waveformToWAVE (stdtr * 7) stdtr w)
@@ -116,23 +116,18 @@ testStream = streamSlurs 150 $ RoseBeat
   ,(1,Beat (30,sampleFrom $ const 0.3))
   ]
 
-ukeTuning :: [Double]
-ukeTuning = fmap (*0.5)
-  [intervalOf octave lowG
-  ,intervalOf (scalePFD 1 perfectFourth) lowG
-  ,intervalOf (scalePFD 2 perfectFourth) lowG
-  ,intervalOf (scalePFD 3 perfectFourth) lowG
-  ]
+ukeTuning :: Int -> Double
+ukeTuning n = intervalOf (scalePFD (fromIntegral n) perfectFourth) lowG
   where
     lowG = intervalOf (addPFD (invertPFD octave) minorSeventh) concertA
 
 ukeSoundTable :: Int -> Int -> Wavetable
-ukeSoundTable s f = discretize . tickTable stdtr . sinWave $ (ukeTuning !! (s - 1)) * semi ** fromIntegral f
+ukeSoundTable s f = discretize . tickTable stdtr . sinWave $ (ukeTuning (s - 1)) * semi ** fromIntegral f
 
 mapleLeaf :: Beat UkeTab
-mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9]
+mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9,m10]
   where
-    (a,b,c) = (pickUke 2 8, pickUke 3 7, pickUke 4 5)
+    (a,b,c) = (pickUke 2 8, pickUke 3 7, UkeTab Nothing (Just 3) Nothing (Just 5))
     (a',b') = (pickUke 2 7, pickUke 3 5)
     m1 =
       [(1,Beat ukeRest)
@@ -181,6 +176,7 @@ mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9]
       ,(1,Beat $ UkeTab Nothing (Just 3) Nothing (Just 0))
       ,(1,Beat $ UkeTab Nothing (Just 3) (Just 3) Nothing)
       ]
+    m10 = ((1,Beat ukeRest) : (3,hn) : tail m9) ++ [(2,Beat ukeRest)]
 
 listenBeats :: Beat Wavetable -> IO ()
 listenBeats b = listenWavetable $ compose (7 * stdtr) b
@@ -219,4 +215,36 @@ playUke (UkeTab a b c d) = mergeWaves . zipWith mkSnd [1,2,3,4] $ [a,b,c,d]
     mkSnd _ Nothing = emptyWave
 
 ukeEnvelope :: Envelope Tick Discrete
-ukeEnvelope = discretizeEnvelope stdtr $ Envelope 0 0 0.05 0.01 0.5 0.01
+ukeEnvelope = discretizeEnvelope stdtr $ Envelope 0 0.01 0.05 0.01 0.5 0.01
+
+theCanon :: Beat PitchFactorDiagram
+theCanon = equalTime . fmap (repeatBeat 2 . arpegiateLike [2,0,1,2,1,0,1,0,2,0,1,2]) $ 
+  [rebaseChord octave majorChord -- I
+  ,rebaseChord perfectFifth majorChord -- V
+  ,rebaseChord majorSixth minorChord -- vi
+  ,invChrd 1 majorChord -- I6
+  ,rebaseChord perfectFourth majorChord -- IV
+  ,rebaseChord octave majorChord -- I
+  ,rebaseChord perfectFourth majorChord -- IV
+  ,rebaseChord perfectFifth majorChord -- V
+  ]
+exampleModulator :: Waveform Tick Double
+exampleModulator = tickTable stdtr . modulate (\x -> oscAbout (1/stdtr) (x/(3*stdtr))) (sinWave 0.5) $ sinWave 0.25
+
+threeVCO :: [Discrete]
+threeVCO = discretize $ niceVCO 3 (niceVCO 30 veryLFO lfo) $ sinWave concertA
+  where
+    veryLFO = streamWavetable $ tickTable stdtr $ sampleFrom $ rampFrom 0.25 5
+    lfo = {-streamWavetable $ tickTable stdtr $-} sinWave 20
+lazyFeedbackTest :: [Discrete]
+lazyFeedbackTest = seed ++ (emuVCO' (fmap (/stdtr) $ zipWith (+) (slowSin 0.5 0.15) $ zipWith (*) (slowSin 0.1 0.5) $ fmap discreteToDouble lazyFeedbackTest) $ discretize $ sinWave concertA)
+  where
+    seed = [0.1,0.2,0.5]
+    slowSin a f = fmap (* a) $ streamWavetable $ tickTable stdtr $ sinWave f
+
+vcvSound :: [Discrete]
+vcvSound = discretize $ lowPassFilter stdtr (fmap (\x -> (x ** 2) * 10) $ repeat 0.234) cuts $ streamWavetable $ tickTable stdtr $ amplitudeModulate env $ sawWave 261.63
+  where
+    env = suspendVelope 0.5 0.1 0 0.93757 0.5
+    cuts = streamWavetable . tickTable stdtr . fmap (\x -> 261.6256 * (2 ** (x + freqParam))) $ env
+    freqParam = 1

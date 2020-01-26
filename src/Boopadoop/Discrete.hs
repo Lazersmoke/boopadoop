@@ -29,13 +29,13 @@ discFactor = fromIntegral $ (maxBound :: Int32)
 
 -- | Round toward zero
 properFloor :: RealFrac a => a -> Int32
-properFloor x = if x >= 0 then floor x else ceiling x
+properFloor x = floor x --if x >= 0 then floor x else ceiling x
 --properFloor = floor
 
 instance Num Discrete where
   (Discrete a) + (Discrete b) = Discrete $ let s = a + b in if signum a == signum b && signum a /= signum s then error ("Discrete overflow! " ++ show (Discrete a) ++ " + " ++ show (Discrete b) ++ " /= " ++ show (Discrete s)) else s
   a - b = a + negate b
-  (*) = unCheckedMultiplyDiscrete
+  (*) = multiplyDiscrete
   negate (Discrete a) = Discrete (negate a)
   abs (Discrete a) = Discrete (abs a)
   signum (Discrete a) = Discrete (signum a)

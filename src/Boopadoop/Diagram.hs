@@ -32,13 +32,13 @@ takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allS
 newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Eq
 
 instance Show PitchFactorDiagram where
-  show pfd = show (diagramToRatio @Double pfd) ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
+  show pfd = take 5 (show (diagramToRatio @Double pfd) ++ repeat '0') ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
 
 instance Ord PitchFactorDiagram where
-  compare a b = compare @Double (diagramToRatio a) (diagramToRatio b)
+  compare a b = compare @Rational (diagramToRatio a) (diagramToRatio b)
 
 instance SummaryChar PitchFactorDiagram where
-  sumUp pfd = "0123456789ab" !! ((`mod` 12) . floor $ diagramToSemi @Double pfd)
+  sumUp pfd = "0123456789ab" !! ((`mod` 12) . round $ diagramToSemi @Double pfd)
 
 -- | 'mempty' is the unison PFD, with ratio @1@.
 instance Monoid PitchFactorDiagram where
@@ -64,7 +64,7 @@ diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio @Double
 --  diagramToSemi (normalizePFD $ Factors [0,0,0,1]) = diagramToSemi (countPFD (7/4)) = 9.688259064691248
 -- @
 diagramToSemi :: Floating a => PitchFactorDiagram -> a
-diagramToSemi = (12 *) . logBase 2 . diagramToRatio . normalizePFD
+diagramToSemi = (12 *) . logBase 2 . diagramToRatio
 
 -- | Normalize a PFD by raising or lowering it by octaves until its ratio lies between @1@ (unison) and @2@ (one octave up).
 -- This operation is idempotent.

@@ -7,7 +7,6 @@ module Boopadoop.Example where
 import Boopadoop
 import Boopadoop.Ideate
 import Debug.Trace
-import qualified Data.WAVE as WAVE
 
 theFilter :: Wavetable
 theFilter = optimizeFilter (160) $ tickTable stdtr $ bandpassFilter concertA 100
@@ -60,18 +59,6 @@ metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discr
   where
     env = envelope 0 0.01 0.07 0.01 0.5 0.005
 
-listenWavestream :: [Discrete] -> IO ()
-listenWavestream w = WAVE.putWAVEFile "listenWavestream.wav" (wavestreamToWAVE (stdtr * 5) stdtr w)
-
-listenWavetable :: Wavetable -> IO ()
-listenWavetable w = print w >> WAVE.putWAVEFile "listenWavetable.wav" (waveformToWAVE (stdtr * 7) stdtr w)
-
-listenChord :: Chord -> IO ()
-listenChord = (\w -> print w >> WAVE.putWAVEFile "listenChord.wav" (waveformToWAVE (stdtr * 10) stdtr w)) . tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . chordPitches
-
-listenArpChord :: Chord -> IO ()
-listenArpChord = (\w -> print w >> WAVE.putWAVEFile "listenChord.wav" (waveformToWAVE (stdtr * 3) stdtr w)) . compose (stdtr * 3) . fmap (tickTable stdtr . discretize . sinWave . (*concertA) . diagramToRatio) . arpegiate
-
 fphExamp :: Beat Chord
 fphExamp = RoseBeat $
   [(2,Beat $ closedFPH 1 $ rebaseChord unison majorChord)
@@ -102,12 +89,6 @@ fphExamp' = fromClosedFPH
   ,(1,2,invertPFD perfectFourth,majorChord)
   ,(4,1,unison,majorChord)
   ]
-
-listenChords :: Beat Chord -> IO ()
-listenChords = (\w -> print w >> WAVE.putWAVEFile "listenChords.wav" (waveformToWAVE (stdtr * 7) stdtr w)) . mediumFO . compose (stdtr * 7) . fmap (tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . chordPitches)
-
-mediumFO :: Wavetable -> Wavetable
-mediumFO = amplitudeModulate (tickTable stdtr . discretize . fmap abs $ triWave 3)
 
 testStream :: [Discrete]
 testStream = streamSlurs 150 $ RoseBeat
@@ -178,9 +159,6 @@ mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9,m10]
       ]
     m10 = ((1,Beat ukeRest) : (3,hn) : tail m9) ++ [(2,Beat ukeRest)]
 
-listenBeats :: Beat Wavetable -> IO ()
-listenBeats b = listenWavetable $ compose (7 * stdtr) b
-
 data UkeTab = UkeTab (Maybe Int) (Maybe Int) (Maybe Int) (Maybe Int)
 
 ukeRest :: UkeTab
@@ -236,6 +214,7 @@ threeVCO = discretize $ niceVCO 3 (niceVCO 30 veryLFO lfo) $ sinWave concertA
   where
     veryLFO = streamWavetable $ tickTable stdtr $ sampleFrom $ rampFrom 0.25 5
     lfo = {-streamWavetable $ tickTable stdtr $-} sinWave 20
+
 lazyFeedbackTest :: [Discrete]
 lazyFeedbackTest = seed ++ (emuVCO' (fmap (/stdtr) $ zipWith (+) (slowSin 0.5 0.15) $ zipWith (*) (slowSin 0.1 0.5) $ fmap discreteToDouble lazyFeedbackTest) $ discretize $ sinWave concertA)
   where
@@ -245,6 +224,49 @@ lazyFeedbackTest = seed ++ (emuVCO' (fmap (/stdtr) $ zipWith (+) (slowSin 0.5 0.
 vcvSound :: [Discrete]
 vcvSound = discretize $ lowPassFilter stdtr (fmap (\x -> (x ** 2) * 10) $ repeat 0.234) cuts $ streamWavetable $ tickTable stdtr $ amplitudeModulate env $ sawWave 261.63
   where
-    env = suspendVelope 0.5 0.1 0 0.93757 0.5
+    env = suspendVelope 0 0.1 0 0.93757 0.5
     cuts = streamWavetable . tickTable stdtr . fmap (\x -> 261.6256 * (2 ** (x + freqParam))) $ env
     freqParam = 1
+
+blueBossaSolFeck :: String
+blueBossaSolFeck = "4-^4--...-.------.-.---^4--.=8x--...-.------.-.---^2--.=8~a2--...-.------.-x-.i-!`-=8~05-.`--.-.`---..=8"
+
+blackWidowSolFeck :: String
+blackWidowSolFeck = "5--7--8-7-5-7--8--7--5--8--a--b-a-8-5--7--8-7-5-8--a--b-a-8-a--0--1-0-a-8--a--b-a-8-a--0--1-0-a-8--a--b-a-8-a--b--a--8--b--1--2-1-b-8--a--b-a-8-b--1--2-1-b-1--3--4-3-1-7=6=6"
+
+warmupSolFeck :: String
+warmupSolFeck = "0```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'=3"
+
+
+blueBossaRiff :: Beat PitchFactorDiagram
+blueBossaRiff = RoseBeat
+  [(1,fmap fromMajorScale $ RoseBeat walk)
+  ,(1,fmap fromMajorScale . fmap (subtract 1) $ RoseBeat $ drop 1 $ walk)
+  ,(1,fmap (addPFD $ invertPFD majorSecond) $ fmap fromMajorScale $ RoseBeat otherWalk)
+  ]
+  where
+    otherWalk =
+      [(3,Beat (7 + 1))
+      ,(1,Beat (7 + 0))
+      ,(1,Beat 6)
+      ,(2,Beat 5)
+      ,(7,Beat 4)
+      ,(2,Beat 3)
+      ,(2,Beat 3)
+      ,(1,Beat 2)
+      ,(2,Beat 5)
+      ,(1,Beat 2)
+      ,(10,Beat 4)
+      ]
+    walk =
+      [(2,Beat 2)
+      ,(3,Beat (7 + 2))
+      ,(1,Beat (7 + 1))
+      ,(1,Beat (7 + 0))
+      ,(2,Beat 6)
+      ,(7,Beat 5)
+      ,(2,Beat 4)
+      ,(4,Beat 3)
+      ,(3,Beat (7 + 2))
+      ,(9,Beat (7 + 1))
+      ]

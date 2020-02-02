@@ -87,15 +87,32 @@ quotRoundUp a b = if a `mod` b == 0 then a `quot` b else (signum a * signum b) +
 
 -- | Build a 'Waveform' by sampling the given function.
 sampleFrom :: (t -> a) -> Waveform t a
-sampleFrom f = Waveform $ \t -> t `seq` f t
+sampleFrom f = Waveform $ \t -> {-t `seq`-} f t
 
 -- | Sample a 'Waveform' at specified time. @'sampleAt' = 'flip' 'sample'@
 sampleAt :: t -> Waveform t a -> a
 sampleAt = flip sample
 
 -- | Pure sine wave of the given frequency
-sinWave :: Floating a => a -> Waveform a a
-sinWave f = sampleFrom $ \t -> let !freq = 2 * pi * f in sin (freq * t)
+--sinWave :: Floating a => a -> Waveform a a
+sinWave :: Double -> DWave
+sinWave f = if sinHack -- speedy fast sin hack from https://www.gamedev.net/forums/topic/621589-extremely-fast-sin-approximation/ due to nightcracker
+  then sampleFrom $ \t -> let 
+    x = pi * ((2 * f * t) - fromIntegral k) 
+    x2 = x * x
+    k = spookyFastTruncate (2 * f * t)
+    in (if odd k then negate else id) (x * (c + x2 * (b + a * x2)))
+  else sampleFrom $ \t -> sin (freq * t)
+  where
+    sinHack = True
+    !freq = 2 * pi * f
+    a = 0.00735246819687011731341356165096815
+    b = -0.16528911397014738207016302002888890
+    c = 0.99969198629596757779830113868360584
+
+-- | Pure sine wave of the given frequency and initial phase
+sinWaveWithPhase :: Floating a => a -> a -> Waveform a a
+sinWaveWithPhase f phi0 = sampleFrom $ \t -> let !freq = 2 * pi * f in sin (freq * t + phi0)
 
 -- | Sine wave that is optimized to store only a small @'CompactWavetable'@.
 -- The period is given in ticks because non-tick-multiple period sin waves will have aliasing under this optimization!
@@ -206,12 +223,14 @@ changeSpeed startTime lerpTime newSpeed wave = sampleFrom $ \t -> sample wave $ 
 
 -- | Play several waves on top of each other, normalizing so that e.g. playing three notes together doesn't triple the volume.
 balanceChord :: Fractional a => [Waveform t a] -> Waveform t a
-balanceChord notes = sampleFrom $ \t -> sum . map ((* (realToFrac . recip @Double . fromIntegral . length $ notes)) . sampleAt t) $ notes
+balanceChord notes = sampleFrom $ \t -> foldr (\x s -> s + factor * sample x t) 0 $ notes
+  where
+    factor = realToFrac . recip @Double . fromIntegral . length $ notes
 
 -- | Play several waves on top of each other, without worrying about the volume. See 'balanceChord' for
 -- a normalized version.
 mergeWaves :: Num a => [Waveform t a] -> Waveform t a
-mergeWaves notes = sampleFrom $ \t -> sum (map (sampleAt t) notes)
+mergeWaves notes = sampleFrom $ \t -> foldr (\x s -> s + sampleAt t x) 0 notes
   -- Average Frequency
   --,frequency = fmap (/(fromIntegral $ length notes)) . foldl (liftA2 (+)) (Just 0) . map frequency $ notes
 
@@ -239,7 +258,16 @@ wavestreamToWAVE outTicks sampleRate ws = WAVE.WAVE
   ,WAVE.waveSamples = [take outTicks $ map unDiscrete ws]
   }
 
-
+finiteWavestreamToWAVE :: Int -> [Discrete] -> WAVE.WAVE
+finiteWavestreamToWAVE sampleRate ws = WAVE.WAVE
+  {WAVE.waveHeader = WAVE.WAVEHeader
+    {WAVE.waveNumChannels = 1
+    ,WAVE.waveFrameRate = sampleRate
+    ,WAVE.waveBitsPerSample = 32
+    ,WAVE.waveFrames = Just $ length ws --Nothing
+    }
+  ,WAVE.waveSamples = [map unDiscrete ws]
+  }
 
 -- | Triangle wave of the given frequency
 triWave :: Double -> Waveform Double Double
@@ -260,6 +288,8 @@ rampFrom x0 time t = if t < time
   then x0 + (1 - x0) * (max t 0)/time
   else 1
 
+waveTimbre :: Functor f => f DWave -> f Wavetable
+waveTimbre = fmap (discretize . tickTable stdtr)
 
 -- | Arbitrarily chosen standard tick rate, used in @'testWave'@
 stdtr :: Num a => a
@@ -503,7 +533,73 @@ scaledDrive drv = (1 + drv) ** 5
 lowPassFilter :: Double -> [Double] -> [Double] -> [Double] -> [Double]
 lowPassFilter rate res cut = fmap (\(_,_,_,d) -> d) . ladderFilter rate res cut
 
+synthFromFreqProfile :: (Double,Double) -> Double -> DWave -> DWave
+synthFromFreqProfile (f0,f1) fSampRate prof = sampleFrom $ \t -> max (-1) $ min 1 $ sum . fmap ((/fromIntegral (length sampPoints)) . sampleAt t . getComponent) $ sampPoints
+  where
+    getComponent f = fmap (*sample prof f) $ sinWaveWithPhase f (pi/2)
+    sampPoints = [f0, f0 + 1/fSampRate .. f1]
+    --jitterFactor k = (fromIntegral (floor (((k - f0) / (f1 - f0)) * 81083) `mod` 115)) / 115
+    --jitter k = k + (2/fSampRate) * jitterFactor k
 
+saxProfile :: DWave
+saxProfile = sampleFrom $ \f -> let x = f/fb in sqrt (n * x/(1 + x**7))
+  where
+    fb = 618
+    n = 1.088910
+
+synthFromDiscreteProfile :: [(Double,Double)] -> Wavetable
+synthFromDiscreteProfile fs = {-solidSlice 0 (truncate $ stdtr/(1 :: Double)) .-} tickTable stdtr . discretize . mergeWaves . fmap (\(f,amp) -> fmap (*(normFactor * amp)) $ sinWave f) $ fs
+  where
+    normFactor = 0.9/(sum $ fmap snd fs)
+
+discSaxProfile :: [(Double,Double)]
+discSaxProfile = f1 ++ f2
+  where
+  f1 = 
+    [(588.6,0.0911)
+    ,(1179,0.05463)
+    ,(1767,0.03471)
+    ,(2357,0.01109)
+    ,(2946,0.01625)
+    ] -- y=63/x ish
+  f2 = 
+    [(294.9,0.03032)
+    ,(884,0.02445)
+    ,(1474,0.01172)
+    ,(2062,0.008224)
+    ,(2651,0.00881)
+    ,(3241,0.005567)
+    ]
+
+genSaxProfile :: Double -> [(Double,Double)]
+genSaxProfile f0 = f1 ++ f2
+  where
+  f1 = 
+    [(2 * f0,0.0911)
+    ,(4 * f0,0.05463)
+    ,(4 * f0,0.03471)
+    ,(6 * f0,0.01109)
+    ,(8 * f0,0.01625)
+    ] -- y=63/x ish
+  f2 = 
+    [(f0,0.03032)
+    ,(3 * f0,0.02445)
+    ,(5 * f0,0.01172)
+    ,(7 * f0,0.008224)
+    ,(9 * f0,0.00881)
+    ,(11 * f0,0.005567)
+    ]
+  --[(1023,0.14190)
+  --,(2044,0.05463)
+  --,(3064,0.03471)
+  --,(5107,0.01625)
+  --]
+
+fakedSaxTimbre :: Double -> Wavetable
+fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile
+
+chordSinTimbre :: Chord -> Double -> Wavetable
+chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ chordPitches c
 
 {-
 sampledConvolve modf profile w = sampleFrom $ \p -> modf (sample (sample profile p) p) (sample w p)
@@ -571,6 +667,10 @@ skipTicks :: Tick -- ^ @n@
           -> Waveform Tick a -> Waveform Tick a
 skipTicks skipRate w = sampleFrom $ \t -> sample w (skipRate * t)
 
+skipStream :: Tick -> [Discrete] -> [Discrete]
+skipStream skipRate (x:xs) = x : skipStream skipRate (drop skipRate xs)
+skipStream _ [] = []
+
 -- | Optimize a @'Wavetable'@ that we know to be periodic by storing it's values on one period.
 -- Takes @period * sizeOf (_ :: 'Discrete')@ bytes of memory to do this.
 --
@@ -587,7 +687,7 @@ exploitPeriodicity period x = sampleFrom $ \t -> case getWavetable cwt Vector.!?
 -- May be unreliable, use with caution.
 usingFFT :: Tick -> Wavetable -> Wavetable
 usingFFT tickRadius w = sampleFrom $ \t -> if t < (fromIntegral $ length l)
-  then(!! t) . fmap (doubleToDiscrete . magnitude) $ l
+  then (!! t) . fmap (doubleToDiscrete . magnitude) $ l
   else 0
   where
     l = fft (map ((\x -> discreteToDouble x :+ 0) . sample w) [-tickRadius .. tickRadius])

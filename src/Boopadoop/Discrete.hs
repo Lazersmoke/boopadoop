@@ -10,7 +10,7 @@ data Stream a = Stream !a (Stream a)
 newtype Discrete = Discrete {unDiscrete :: Int32} deriving (Eq,Ord)
 
 instance Show Discrete where
-  show (Discrete x) = "Discrete {unDiscrete = " ++ show x ++ ", value = " ++ show (fromIntegral x / discFactor :: Double) ++ "}"
+  show = show . unDiscrete --discreteToDouble
 
 -- | Breaks when the double is not in [-1,1]
 doubleToDiscrete :: Double -> Discrete
@@ -28,9 +28,16 @@ discFactor = fromIntegral $ (maxBound :: Int32)
 {-# SPECIALISE discFactor :: Int32 #-}
 
 -- | Round toward zero
-properFloor :: RealFrac a => a -> Int32
-properFloor x = floor x --if x >= 0 then floor x else ceiling x
---properFloor = floor
+properFloor :: Double -> Int32
+properFloor = if spookyFastHack
+  then spookyFastTruncate
+  else floor
+
+-- | Spooky fast double to int32 truncation from http://stereopsis.com/sree/fpu2006.html
+spookyFastTruncate :: Double -> Int32
+spookyFastTruncate x = fromIntegral . fst . decodeFloat $ x + magic
+  where
+    magic = 6755399441055744.0 :: Double
 
 instance Num Discrete where
   (Discrete a) + (Discrete b) = Discrete $ let s = a + b in if signum a == signum b && signum a /= signum s then error ("Discrete overflow! " ++ show (Discrete a) ++ " + " ++ show (Discrete b) ++ " /= " ++ show (Discrete s)) else s
@@ -62,7 +69,7 @@ divideDiscrete :: Discrete -> Discrete -> Discrete
 instance Fractional Discrete where
   (/) = unCheckedDivideDiscrete
   fromRational r = if r <= 1 && r >= -1
-    then Discrete . properFloor $ discFactor * r
+    then Discrete . floor $ discFactor * r
     else error $ "(fromRational " ++ show r ++ " :: Discrete)"
 
 instance Bounded Discrete where

@@ -89,6 +89,9 @@ majorChord = chordOf [unison,majorThird,perfectFifth]
 minorChord :: Chord
 minorChord = chordOf [unison,minorThird,perfectFifth]
 
+powerChord :: Chord
+powerChord = chordOf [unison,perfectFifth,octave]
+
 fphRanges :: [[PitchFactorDiagram]]
 fphRanges = fmap (fmap fromDiatonic) [bass,tenor,alto,soprano]
   where

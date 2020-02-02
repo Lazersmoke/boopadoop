@@ -28,7 +28,7 @@ dependencies:
 - containers
 - permutation
 - primitive
-- finite-typelits
+- matplotlib
 
 library:
   source-dirs: 

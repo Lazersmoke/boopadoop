@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE PolyKinds #-}
@@ -10,6 +11,7 @@ module Boopadoop.Ideate where
 
 import Boopadoop
 import qualified Data.Set as Set
+import Data.List
 import Debug.Trace
 
 data Motion = MoveInterval PitchFactorDiagram
@@ -61,6 +63,14 @@ compose time (RoseBeat bs) = sampleFrom (\t -> sampleIn t bs t)
     curBeatTicks = time `quotRoundUp` curSubdivs
     -- Not needed, since `sampleIn` already doesn't sample past the end or otherwise out of bounds.
     --compactified = fmap (\(k,w) -> modulate muting (compactWave (0,k * curBeatTicks)) w) $ xs
+
+composeTimed :: Num a => Tick -> Timed (Waveform Tick a) -> [a]
+composeTimed beatTime (Timed timed) = go 0 timed
+  where
+    go t b@((k,w):xs) = if t < beatTime * k
+      then sample w t : go (t + 1) b
+      else go 0 xs
+    go _ [] = []
 
 composeSlurred :: Tick -> [(Tick,Wavetable)] -> Beat (Tick,Wavetable) -> Waveform Tick (Discrete,[(Tick,Wavetable)])
 composeSlurred _ slurs (Beat expw) = (sampleFrom $ \t -> addSlurs t (expw:slurs))
@@ -161,7 +171,7 @@ sampleMelody = RoseBeat
     fastBit = RoseBeat [Beat perfectFifth]
 -}
 
-toConcreteKey :: Double -> Beat PitchFactorDiagram -> Beat Double
+toConcreteKey :: Functor f => Double -> f PitchFactorDiagram -> f Double
 toConcreteKey root = fmap (($ root) . intervalOf)
 
 fromTabWithTuning :: [Double] -> [Int] -> [Double]
@@ -170,6 +180,77 @@ fromTabWithTuning = zipWith (\t f -> t * (semi ** fromIntegral f))
 
 makeChoice :: String -> [k] -> (k -> a) -> (Int -> a)
 makeChoice _ xs f i = f $ xs !! i
+
+data LeadChord = LeadChord {chordTones :: Set.Set PitchFactorDiagram, scaleTones :: Set.Set PitchFactorDiagram}
+
+nonChordTones :: LeadChord -> Set.Set PitchFactorDiagram
+nonChordTones lc = scaleTones lc `Set.difference` chordTones lc
+
+data RiffSemaphore = PickedRiff PitchFactorDiagram (Beat PitchFactorDiagram) deriving Show
+
+consecrateSemaphore :: RiffSemaphore -> Beat PitchFactorDiagram
+consecrateSemaphore (PickedRiff k bs) = fmap (addPFD k) bs
+
+walkMajorUp :: Int -> [Int] -> Timed PitchFactorDiagram
+walkMajorUp p0 ts = withTimings ts . fmap fromMajorScale $ [p0, p0 + 1 ..]
+
+walkMajorDown :: Int -> [Int] -> Timed PitchFactorDiagram
+walkMajorDown p0 ts = withTimings ts . fmap fromMajorScale $ [p0, p0 - 1 ..]
+
+withTimings :: [Int] -> [a] -> Timed a
+withTimings ts = Timed . zip ts
+
+solFeck :: String -> Timed (Maybe PitchFactorDiagram)
+solFeck = Timed . (\(_,_,_,notes) -> notes) . foldl step st0
+  where
+    debugSolFeck = False
+    st0 = (0 :: Int,unison,unison,[])
+    step (mode,key,lastNote,notes) symb = (\(a,b,c,d) -> if debugSolFeck then (trace ("solFeck " ++ [symb] ++ " in key " ++ show key ++ "with lastNote " ++ show lastNote ++ " return:" ++ show (Timed d)) (a,b,c,d)) else (a,b,c,d)) $ case mode of
+      2 -> case fmap fromDiatonic $ symb `elemIndex` "0123456789ab" of
+        Just p -> (0,p,lastNote,notes)
+        Nothing -> error $ "Unknown solFeck key signature " ++ [symb]
+      1 -> (0,key,lastNote,init notes ++ [(\(k,p) -> (k+(read [symb] :: Int),p)) (last notes)])
+      0 -> case getRealDelta symb (aliasToScale key lastNote) of --getRealDelta symb (aliasToScale key lastNote) of
+        Just del -> let n' = addPFD key (fromDiatonic $ aliasToScale key lastNote + del) in (0,key,n', notes ++ [(1,Just n')])
+        Nothing -> case symb of
+          '^' -> (0,key,addPFD octave lastNote,notes)
+          'v' -> (0,key,addPFD (invertPFD octave) lastNote,notes)
+          '-' -> (0,key,lastNote,init notes ++ [(\(k,p) -> (k+1,p)) (last notes)])
+          '=' -> (1,key,lastNote,notes)
+          '~' -> (2,key,lastNote,notes)
+          ' ' -> (0,key,lastNote,notes ++ [(1,Nothing)])
+          'x' -> (0,key,lastNote,notes ++ [(\(_,p) -> (1,p)) (last notes)])
+          'i' -> let n' = nextStepUpMajor key (nextStepUpMajor key (nextStepUpMajor key lastNote)) in (0,key,n',notes ++ [(1,Just n')])
+          '!' -> let n' = nextStepDownMajor key (nextStepDownMajor key (nextStepDownMajor key lastNote)) in (0,key,n',notes ++ [(1,Just n')])
+          '.' -> let n' = nextStepDownMajor key lastNote in (0,key,n',notes ++ [(1,Just n')])
+          ',' -> let n' = nextStepDownMajor key (nextStepDownMajor key lastNote) in (0,key,n',notes ++ [(1,Just n')])
+          '\'' -> let n' = nextStepUpMajor key lastNote in (0,key,n',notes ++ [(1,Just n')])
+          '`' -> let n' = nextStepUpMajor key (nextStepUpMajor key lastNote) in (0,key,n',notes ++ [(1,Just n')])
+          x -> error $ "Unknown solFeck symbol '" ++ [x] ++ "'"
+      _ -> error $ "Unknown solFeck mode " ++ show mode ++ " with symbol '" ++ [symb] ++ "'"
+
+diaIndex :: Char -> Maybe Int
+diaIndex = (`elemIndex` "0123456789ab")
+
+getRealDelta :: Char -> Int -> Maybe Int
+getRealDelta symb cur = fmap (\i -> let delta = i - (cur `mod` 12) in ((delta + 5) `mod` 12) - 5) $ diaIndex symb
+
+nextStepDownMajor :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
+nextStepDownMajor key x = case foldl (\s p -> case s of {Nothing -> if p < nx then Just p else Nothing; Just s' -> Just s'}) Nothing (fmap (fromMajorScale) [8,7..(-1)]) of
+  Nothing -> error $ "nextStepDownMajor(" ++ show x ++ ")"
+  Just x' -> addPFD (addPFD (invertPFD nx) x') x
+  where
+    nx = normalizePFD (addPFD (invertPFD key) x)
+
+nextStepUpMajor :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
+nextStepUpMajor key x = case foldl (\s p -> case s of {Nothing -> if p > nx then Just p else Nothing; Just s' -> Just s'}) Nothing (fmap (fromMajorScale) [0,1..9]) of
+  Nothing -> error $ "nextStepUpMajor(" ++ show x ++ ")"
+  Just x' -> addPFD (addPFD (invertPFD nx) x') x
+  where
+    nx = normalizePFD (addPFD (invertPFD key) x)
+
+aliasToScale :: PitchFactorDiagram -> PitchFactorDiagram -> Int
+aliasToScale key x = round (diagramToSemi @Double (addPFD (invertPFD key) x))
 
 --stuff' :: Finite 3 -> Double
 --stuff' = makeChoice "num" (ListCons 1 (ListCons 2 (ListCons (3 :: Double) ListNil))) $ \t -> 2 * t

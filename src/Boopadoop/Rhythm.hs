@@ -1,14 +1,46 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TupleSections #-}
 -- | Representing rhythms as rose trees.
 module Boopadoop.Rhythm where
 
 import Data.Tree
+import Control.Monad
 import Debug.Trace
+import GHC.Exts
 
 -- | A rhythm is represented as a rose tree where each subtree is given time with integer weights.
 -- Leaves are any data.
 data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
+
+newtype Timed a = Timed [(Int,a)] deriving Functor
+
+overTimings :: (Int -> a -> b) -> Timed a -> Timed b
+overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs
+
+instance SummaryChar a => Show (Timed a) where
+  show (Timed bs) = "[" ++ (bs >>= \(k,b) -> sumUp b : replicate (k-1) '-') ++ "]"
+
+instance Semigroup (Timed a) where
+  (<>) (Timed a) (Timed b) = Timed (a ++ b)
+
+instance Monoid (Timed a) where
+  mempty = Timed []
+
+instance Applicative Timed where
+  pure x = Timed [(1,x)]
+  (<*>) = ap
+
+instance Monad Timed where
+  t >>= f = join' $ fmap f t
+    where
+      join' (Timed xs) = Timed $ concatMap (\(k,Timed timed) -> fmap (\(k',x) -> (k * k',x)) timed) xs
+
+instance IsList (Timed a) where
+  type Item (Timed a) = (Int,a)
+  fromList = Timed
+  toList (Timed t) = t
 
 viewBeat :: Beat String -> String
 viewBeat beat = drawTree . toTree $ beat
@@ -51,7 +83,7 @@ instance SummaryChar a => Show (Beat a) where
   show (Beat x) = [sumUp x]
 
 instance SummaryChar a => SummaryChar (Maybe a) where
-  sumUp Nothing = '.'
+  sumUp Nothing = '_'
   sumUp (Just x) = sumUp x
 
 instance SummaryChar DrumRack where

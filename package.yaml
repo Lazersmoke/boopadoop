@@ -26,9 +26,10 @@ dependencies:
 - semialign
 - vector
 - containers
-- permutation
 - primitive
-- matplotlib
+- aeson
+- text
+- bytestring
 
 library:
   source-dirs: 
@@ -40,6 +41,10 @@ library:
   - Boopadoop.Discrete
   ghc-options:
   - -Wall
+  c-sources: cbits/cstuff.cpp
+  extra-libraries:
+  - Rack
+  - stdc++
 
 executables:
   perfprof:

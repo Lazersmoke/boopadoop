@@ -237,6 +237,9 @@ blackWidowSolFeck = "5--7--8-7-5-7--8--7--5--8--a--b-a-8-5--7--8-7-5-8--a--b-a-8
 warmupSolFeck :: String
 warmupSolFeck = "0```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'=3"
 
+seekAndDestroySolFeck :: String
+seekAndDestroySolFeck = "0-0-^^787---vv0-^232---0-^8-7-a-7-^3-2-"
+
 
 blueBossaRiff :: Beat PitchFactorDiagram
 blueBossaRiff = RoseBeat

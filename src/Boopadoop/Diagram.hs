@@ -29,7 +29,10 @@ takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allS
 -- small 'PitchFactorDiagram's with small factors in them, are generally consonant, and
 -- many interesting just intonation intervals can be written this way (see 'Boopadoop.Interval.perfectFifth'
 -- and 'Boopadoop.Interval.majorThird').
-newtype PitchFactorDiagram = Factors {getFactors :: [Integer]} deriving Eq
+newtype PitchFactorDiagram = Factors {getFactors :: [Integer]}
+
+instance Eq PitchFactorDiagram where
+  (==) a b = (==) @Rational (diagramToRatio a) (diagramToRatio b)
 
 instance Show PitchFactorDiagram where
   show pfd = take 5 (show (diagramToRatio @Double pfd) ++ repeat '0') ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"

@@ -24,7 +24,6 @@ import Data.Int
 import Data.Complex
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
-import Debug.Trace
 
 -- | A 'Waveform' is a function (of time) that we can later sample.
 newtype Waveform t a = Waveform 
@@ -571,6 +570,21 @@ discSaxProfile = f1 ++ f2
     ,(3241,0.005567)
     ]
 
+genSaxProfile' :: Double -> [(Double,Double)]
+genSaxProfile' f0 =
+  [(1 * f0,0.0474475510012406)
+  ,(2 * f0,0.0141427241744339)
+  ,(3 * f0,0.00838229600425522)
+  ,(4 * f0,0.00452452580892121)
+  ,(5 * f0,0.0129662632033567)
+  ,(6 * f0,0.0102954061023286)
+  ,(7 * f0,0.00246665413386754)
+  ,(8 * f0,0.00309631105551752)
+  ,(9 * f0,0.00313836031805197)
+  ,(10 * f0,0.00549688733850934)
+  ,(11 * f0,0.00826471159302181)
+  ,(12 * f0,0.00280485189554740)
+  ]
 genSaxProfile :: Double -> [(Double,Double)]
 genSaxProfile f0 = f1 ++ f2
   where
@@ -596,7 +610,7 @@ genSaxProfile f0 = f1 ++ f2
   --]
 
 fakedSaxTimbre :: Double -> Wavetable
-fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile
+fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile'
 
 chordSinTimbre :: Chord -> Double -> Wavetable
 chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ chordPitches c

@@ -32,6 +32,8 @@ properFloor :: Double -> Int32
 properFloor = if spookyFastHack
   then spookyFastTruncate
   else floor
+  where
+    spookyFastHack = True
 
 -- | Spooky fast double to int32 truncation from http://stereopsis.com/sree/fpu2006.html
 spookyFastTruncate :: Double -> Int32

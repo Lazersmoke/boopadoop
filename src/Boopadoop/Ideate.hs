@@ -64,10 +64,19 @@ compose time (RoseBeat bs) = sampleFrom (\t -> sampleIn t bs t)
     -- Not needed, since `sampleIn` already doesn't sample past the end or otherwise out of bounds.
     --compactified = fmap (\(k,w) -> modulate muting (compactWave (0,k * curBeatTicks)) w) $ xs
 
+timeStreamToValueStream :: Rational -> TimeStream (Waveform Tick a) -> [a]
+timeStreamToValueStream ticksPerCount = go (0 :: Tick)
+  where
+    go :: Tick -> TimeStream (Waveform Tick a) -> [a]
+    go !tickNum (TimeStream t x xs) = if fromIntegral tickNum < t * ticksPerCount
+      then sample x tickNum : go (tickNum + 1) (TimeStream t x xs)
+      else go 0 xs
+    go _ EndStream = []
+
 composeTimed :: Num a => Tick -> Timed (Waveform Tick a) -> [a]
 composeTimed beatTime (Timed timed) = go 0 timed
   where
-    go t b@((k,w):xs) = if t < beatTime * k
+    go !t b@((k,w):xs) = if t < beatTime * k
       then sample w t : go (t + 1) b
       else go 0 xs
     go _ [] = []
@@ -151,6 +160,21 @@ arpegiate c = arpegiateLike [0 .. Set.size (getNotes c) - 1] c
 arpegiateLike :: [Int] -> Chord -> Beat PitchFactorDiagram
 arpegiateLike ixs c = equalTime . fmap (Beat . (chordPitches c!!)) $ ixs
 
+volumeFollowsPitch :: [PitchFactorDiagram] -> [Discrete]
+volumeFollowsPitch = go 0.5 unison
+  where
+    go v lastPitch (x:xs) = let deltaPitch = addPFD x (invertPFD lastPitch) in if deltaPitch == unison
+      then v : go v x xs
+      else if deltaPitch > unison
+        then let v' = (\y -> doubleToDiscrete y*(1 - v) + v) . min 1 . logBase 2 . diagramToRatio $ deltaPitch in v' : go v' x xs
+        else let v' = (\y -> (1 - v) + doubleToDiscrete y*v) . min 1 . logBase 2 . recip . diagramToRatio $ deltaPitch in v' : go v' x xs
+    go _ _ [] = []
+
+
+-- For constant pitch: keep same volume
+-- For ascending pitch: increase volume, slope goes like slope of pitch
+--
+
 -- Music is made of beats, pitches, timbre
 --data Ideation = Ideate {
   --deltaMusic :: Music -> Music
@@ -200,32 +224,36 @@ walkMajorDown p0 ts = withTimings ts . fmap fromMajorScale $ [p0, p0 - 1 ..]
 withTimings :: [Int] -> [a] -> Timed a
 withTimings ts = Timed . zip ts
 
-solFeck :: String -> Timed (Maybe PitchFactorDiagram)
-solFeck = Timed . (\(_,_,_,notes) -> notes) . foldl step st0
+solFeck :: String -> TimeStream (Maybe PitchFactorDiagram)
+solFeck = reverseTimeStream . (\(_,_,_,notes) -> notes) . foldl step st0
   where
+    extendPreviousNoteBy n (TimeStream t x xs) = TimeStream (t + n) x xs
+    extendPreviousNoteBy _ EndStream = EndStream
+    duplicatePreviousNote (TimeStream t x xs) = TimeStream 1 x $ TimeStream t x xs
+    duplicatePreviousNote EndStream = EndStream
     debugSolFeck = False
-    st0 = (0 :: Int,unison,unison,[])
-    step (mode,key,lastNote,notes) symb = (\(a,b,c,d) -> if debugSolFeck then (trace ("solFeck " ++ [symb] ++ " in key " ++ show key ++ "with lastNote " ++ show lastNote ++ " return:" ++ show (Timed d)) (a,b,c,d)) else (a,b,c,d)) $ case mode of
+    st0 = (0 :: Int,unison,unison,EndStream)
+    step (mode,key,lastNote,notes) symb = (\(a,b,c,d) -> if debugSolFeck then (trace ("solFeck " ++ [symb] ++ " in key " ++ show key ++ "with lastNote " ++ show lastNote ++ " return:" ++ show d) (a,b,c,d)) else (a,b,c,d)) $ case mode of
       2 -> case fmap fromDiatonic $ symb `elemIndex` "0123456789ab" of
         Just p -> (0,p,lastNote,notes)
         Nothing -> error $ "Unknown solFeck key signature " ++ [symb]
-      1 -> (0,key,lastNote,init notes ++ [(\(k,p) -> (k+(read [symb] :: Int),p)) (last notes)])
-      0 -> case getRealDelta symb (aliasToScale key lastNote) of --getRealDelta symb (aliasToScale key lastNote) of
-        Just del -> let n' = addPFD key (fromDiatonic $ aliasToScale key lastNote + del) in (0,key,n', notes ++ [(1,Just n')])
+      1 -> (0,key,lastNote,extendPreviousNoteBy (fromIntegral (read [symb] :: Int)) notes)
+      0 -> case getRealDelta symb (aliasToScale key lastNote) of
+        Just del -> let n' = addPFD key (fromDiatonic $ aliasToScale key lastNote + del) in (0,key,n', TimeStream 1 (Just n') notes)
         Nothing -> case symb of
           '^' -> (0,key,addPFD octave lastNote,notes)
           'v' -> (0,key,addPFD (invertPFD octave) lastNote,notes)
-          '-' -> (0,key,lastNote,init notes ++ [(\(k,p) -> (k+1,p)) (last notes)])
+          '-' -> (0,key,lastNote,extendPreviousNoteBy 1 notes)
           '=' -> (1,key,lastNote,notes)
           '~' -> (2,key,lastNote,notes)
-          ' ' -> (0,key,lastNote,notes ++ [(1,Nothing)])
-          'x' -> (0,key,lastNote,notes ++ [(\(_,p) -> (1,p)) (last notes)])
-          'i' -> let n' = nextStepUpMajor key (nextStepUpMajor key (nextStepUpMajor key lastNote)) in (0,key,n',notes ++ [(1,Just n')])
-          '!' -> let n' = nextStepDownMajor key (nextStepDownMajor key (nextStepDownMajor key lastNote)) in (0,key,n',notes ++ [(1,Just n')])
-          '.' -> let n' = nextStepDownMajor key lastNote in (0,key,n',notes ++ [(1,Just n')])
-          ',' -> let n' = nextStepDownMajor key (nextStepDownMajor key lastNote) in (0,key,n',notes ++ [(1,Just n')])
-          '\'' -> let n' = nextStepUpMajor key lastNote in (0,key,n',notes ++ [(1,Just n')])
-          '`' -> let n' = nextStepUpMajor key (nextStepUpMajor key lastNote) in (0,key,n',notes ++ [(1,Just n')])
+          ' ' -> (0,key,lastNote,TimeStream 1 Nothing notes)
+          'x' -> (0,key,lastNote,duplicatePreviousNote notes)
+          'i' -> let n' = nextStepUpMajor key (nextStepUpMajor key (nextStepUpMajor key lastNote)) in (0,key,n',TimeStream 1 (Just n') notes)
+          '!' -> let n' = nextStepDownMajor key (nextStepDownMajor key (nextStepDownMajor key lastNote)) in (0,key,n',TimeStream 1 (Just n') notes)
+          '.' -> let n' = nextStepDownMajor key lastNote in (0,key,n',TimeStream 1 (Just n') notes)
+          ',' -> let n' = nextStepDownMajor key (nextStepDownMajor key lastNote) in (0,key,n',TimeStream 1 (Just n') notes)
+          '\'' -> let n' = nextStepUpMajor key lastNote in (0,key,n',TimeStream 1 (Just n') notes)
+          '`' -> let n' = nextStepUpMajor key (nextStepUpMajor key lastNote) in (0,key,n',TimeStream 1 (Just n') notes)
           x -> error $ "Unknown solFeck symbol '" ++ [x] ++ "'"
       _ -> error $ "Unknown solFeck mode " ++ show mode ++ " with symbol '" ++ [symb] ++ "'"
 
@@ -251,6 +279,8 @@ nextStepUpMajor key x = case foldl (\s p -> case s of {Nothing -> if p > nx then
 
 aliasToScale :: PitchFactorDiagram -> PitchFactorDiagram -> Int
 aliasToScale key x = round (diagramToSemi @Double (addPFD (invertPFD key) x))
+
+
 
 --stuff' :: Finite 3 -> Double
 --stuff' = makeChoice "num" (ListCons 1 (ListCons 2 (ListCons (3 :: Double) ListNil))) $ \t -> 2 * t

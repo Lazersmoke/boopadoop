@@ -16,8 +16,52 @@ data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
 
 newtype Timed a = Timed [(Int,a)] deriving Functor
 
+data TimeStream a = TimeStream Rational a (TimeStream a) | EndStream
+
+instance SummaryChar a => Show (TimeStream a) where
+  show (TimeStream t x xs@(TimeStream _ _ _)) = "<" ++ [sumUp x] ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :> " ++ show xs
+  show (TimeStream t x EndStream) = "<" ++ [sumUp x] ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :|"
+  show EndStream = "EndStream"
+
+instance Functor TimeStream where
+  fmap f (TimeStream t x xs) = TimeStream t (f x) (fmap f xs)
+  fmap _ EndStream = EndStream
+
+instance Applicative TimeStream where
+  pure x = TimeStream 1 x EndStream
+  (<*>) = ap
+
+instance Monad TimeStream where
+  times >>= f = join' $ fmap f times
+    where
+      join' (TimeStream t ts xs) = go (join' xs) t ts
+      join' EndStream = EndStream
+      go k t' (TimeStream t x xs) = TimeStream (t * t') x (go k t' xs)
+      go k _ EndStream = k
+
+modulateTimeStream :: (a -> b -> c) -> TimeStream a -> TimeStream b -> TimeStream c
+modulateTimeStream f (TimeStream tl xl xsl) (TimeStream tr xr xsr) = case compare tl tr of
+  LT -> TimeStream tl (f xl xr) $ modulateTimeStream f xsl (TimeStream (tr - tl) xr xsr)
+  EQ -> TimeStream tl (f xl xr) $ modulateTimeStream f xsl xsr
+  GT -> TimeStream tr (f xl xr) $ modulateTimeStream f (TimeStream (tl - tr) xl xsl) xsr
+modulateTimeStream _ _ _ = EndStream
+
+instance Foldable TimeStream where
+  foldr f z (TimeStream _ x xs) = f x (foldr f z xs)
+  foldr _ z EndStream = z
+
+reverseTimeStream :: TimeStream a -> TimeStream a
+reverseTimeStream = go EndStream
+  where
+    go acc EndStream = acc
+    go acc (TimeStream t x xs) = go (TimeStream t x acc) xs
+
 overTimings :: (Int -> a -> b) -> Timed a -> Timed b
 overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs
+
+overTimingsTimeStream :: (Rational -> a -> b) -> TimeStream a -> TimeStream b
+overTimingsTimeStream f (TimeStream t x xs) = TimeStream t (f t x) $ overTimingsTimeStream f xs
+overTimingsTimeStream _ EndStream = EndStream
 
 instance SummaryChar a => Show (Timed a) where
   show (Timed bs) = "[" ++ (bs >>= \(k,b) -> sumUp b : replicate (k-1) '-') ++ "]"
@@ -92,6 +136,13 @@ instance SummaryChar DrumRack where
 
 instance SummaryChar () where
   sumUp () = '\''
+
+instance SummaryChar Char where
+  sumUp = id
+
+instance SummaryChar Bool where
+  sumUp True = '1'
+  sumUp False = '0'
 
 -- | A rack of drums. Simple enumeration of the different possible drum types.
 data DrumRack = Kick | Snare

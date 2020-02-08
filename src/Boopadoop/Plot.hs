@@ -1,13 +1,9 @@
 {-# LANGUAGE BangPatterns #-}
 module Boopadoop.Plot where
 
-import Graphics.Matplotlib
 import Boopadoop
 import Boopadoop.Ideate
 import qualified Data.WAVE as WAVE
-
-makePlot :: IO ()
-makePlot = onscreen $ contourF (\a b -> sin (a*pi/180.0) + cos (b*pi/180.0)) (-100) 100 (-200) 200 10
 
 listenUnboundedWavestream :: [Discrete] -> IO ()
 listenUnboundedWavestream = WAVE.putWAVEFile "listen.wav" . finiteWavestreamToWAVE stdtr
@@ -40,15 +36,23 @@ listenSinesKey :: Double -> Double -> Beat PitchFactorDiagram -> IO ()
 listenSinesKey k l = listenWavestream' l . streamWavetable . compose (floor $ l * stdtr) . fmap (tickTable stdtr . discretize . sinWave) . toConcreteKey k
 
 listenTimedSinesKey :: Double -> Timed (Maybe PitchFactorDiagram) -> IO ()
-listenTimedSinesKey k = listenTimedTimbreKey k sinTimbre
+listenTimedSinesKey k = listenTimedTimbreKey k (waveTimbre sinWave)
 
 listenTimedTimbreKey :: Double -> (Double -> Wavetable) -> Timed (Maybe PitchFactorDiagram) -> IO ()
 listenTimedTimbreKey k timbre = listenUnboundedWavestream . composeTimed tempo . niceEnvelope tempo . fmap (fmap (timbre . flip intervalOf k))
   where
     tempo = floor $ stdtr / (4 :: Double)
 
+listenTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe PitchFactorDiagram) -> IO ()
+listenTimeStreamTimbreKey k timbre = listenUnboundedWavestream . timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
+  where
+    tempo = floor $ stdtr / (4 :: Double)
+
+listenTimeStream :: TimeStream Wavetable -> IO ()
+listenTimeStream = listenWavestream . timeStreamToValueStream stdtr
+
 listenTimbre :: (Double -> Wavetable) -> IO ()
-listenTimbre tim = listenTimedTimbreKey (intervalOf (invertPFD octave) concertA) tim $ solFeck "v0''''''0''''''0''''''0......0......0......0"
+listenTimbre tim = listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) tim $ solFeck "v0''''''0''''''0''''''0......0......0......0"
 
 niceEnvelope :: Tick -> Timed (Maybe Wavetable) -> Timed Wavetable
 niceEnvelope tempo = overTimings (\k -> maybe emptyWave (amplitudeModulate (env k)))
@@ -56,11 +60,17 @@ niceEnvelope tempo = overTimings (\k -> maybe emptyWave (amplitudeModulate (env 
     env k = susEnvelope de (tempo * k - floor ((0.01 :: Double) * stdtr))
     de = (discretizeEnvelope stdtr $ Envelope 0.001 0.01 0.07 0.01 0.5 0.01)
 
-listenSolfeck :: String -> IO ()
-listenSolfeck = listenTimedTimbreKey (intervalOf (invertPFD octave) concertA) sinTimbre . solFeck
+--niceEnvelopets :: Tick -> TimeStream (Maybe Wavetable) -> TimeStream Wavetable
+--niceEnvelopets tempo = overTimingsTimeStream (\r -> maybe emptyWave (amplitudeModulate (env r)))
+  --where
+    --env k = susEnvelope de (fromRational k - 0.01)
+    --de = (discretizeEnvelope stdtr $ Envelope 0.001 0.01 0.07 0.01 0.5 0.01)
 
-sinTimbre :: Double -> Wavetable
-sinTimbre = discretize . tickTable stdtr . sinWave
+listenSolfeck :: String -> IO ()
+listenSolfeck = listenSolfeckTimbre (waveTimbre sinWave)
+
+listenSolfeckTimbre :: (Double -> Wavetable) -> String -> IO ()
+listenSolfeckTimbre tim = listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) tim . solFeck
 
 powerChordify :: PitchFactorDiagram -> [PitchFactorDiagram]
 powerChordify p = [p, addPFD perfectFifth p, addPFD octave p]

@@ -90,3 +90,7 @@ type Tick = Int
 
 computeExternally :: (Double -> Double) -> Discrete -> Discrete
 computeExternally f = doubleToDiscrete . f . discreteToDouble
+
+-- | A well-behaved type for phases. Always takes a value in [0,1]
+--newtype WBPhase = WBPhase {getW32Repr :: Word32}
+

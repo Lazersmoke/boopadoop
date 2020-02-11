@@ -47,7 +47,7 @@ foreign import ccall "windows.h GetProcAddress" c_windowsGetProcAddress :: Ptr (
 foreign import ccall "windows.h GetLastError" c_windowsGetLastError :: IO CInt
 foreign import ccall "windows.h SetErrorMode" c_windowsSetErrorMode :: CUInt -> IO CUInt
 foreign import ccall "windows.h strlen" c_strlen :: CString -> IO CInt
---foreign import ccall unsafe "dynamic" callInitCallback :: FunPtr (Ptr (RackStruct "Plugin") -> IO ()) -> Ptr (RackStruct "Plugin") -> IO ()
+foreign import ccall unsafe "dynamic" callInitCallback :: FunPtr (Ptr (RackStruct "Plugin") -> IO ()) -> Ptr (RackStruct "Plugin") -> IO ()
 
 windowsLoadLibrary :: String -> IO ()
 windowsLoadLibrary s = do
@@ -60,7 +60,8 @@ windowsLoadLibrary s = do
   dataPtr <- c_GetDataPointer plugin
   putStrLn $ "Got datapointer hask: " ++ show dataPtr
   --putStrLn =<< fmap (concatMap hexify) (forM [0..128] (peekElemOff (castPtr dataPtr :: Ptr Word8)))
-  --callInitCallback initCallback plugin
+  callInitCallback initCallback plugin
+  --_ <- c_GetDataPointer plugin
   putStrLn $ "all done hask"
   where
     hexify x = [hex !! (fromIntegral x `div` 16), hex !! (fromIntegral x `mod` 16),' ']

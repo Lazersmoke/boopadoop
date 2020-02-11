@@ -30,6 +30,8 @@ dependencies:
 - aeson
 - text
 - bytestring
+- fixed-vector
+- random
 
 library:
   source-dirs: 

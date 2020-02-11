@@ -66,6 +66,7 @@ extra-deps:
 # extra-lib-dirs: [/path/to/dir]
 extra-lib-dirs:
 - Rack-SDK
+- cbits
 extra-include-dirs:
 - Rack-SDK/include
 - Rack-SDK/dep/include

@@ -24,6 +24,32 @@ allSemis = map (semi **) . map fromIntegral $ [0..11 :: Int]
 takeFinAlignments :: Floating a => Int -> [[a]]
 takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allSemis
 
+newtype PitchClass = ClassFactors {getClassFactors :: [Integer]}
+
+instance Eq PitchClass where
+  (==) a b = (==) @PitchFactorDiagram (classInOctave 0 a) (classInOctave 0 b)
+
+instance Ord PitchClass where
+  compare a b = compare @PitchFactorDiagram (classInOctave 0 a) (classInOctave 0 b)
+
+instance Show PitchClass where
+  show pfd = take 5 (show (diagramToRatio @Double $ classInOctave 0 pfd) ++ repeat '0') ++ " {x," ++ (init . tail $ show (getClassFactors pfd)) ++ "}"
+
+getPitchClass :: PitchFactorDiagram -> PitchClass
+getPitchClass = ClassFactors . drop 1 . getFactors
+
+classInOctave :: Integer -> PitchClass -> PitchFactorDiagram
+classInOctave k = addPFD (scalePFD k octave) . normalizePFD . Factors . (0:) . getClassFactors
+
+getOctave :: PitchFactorDiagram -> Integer
+getOctave = floor . logBase 2 . diagramToRatio @Double
+
+complPitchClass :: PitchClass -> PitchClass
+complPitchClass = ClassFactors . fmap negate . getClassFactors
+
+octave :: PitchFactorDiagram
+octave = Factors [1]
+
 -- | A pitch factor diagram is a list of prime exponents that represents a rational number
 -- via 'diagramToRatio'. These are useful because pitches with few prime factors, that is,
 -- small 'PitchFactorDiagram's with small factors in them, are generally consonant, and
@@ -35,7 +61,9 @@ instance Eq PitchFactorDiagram where
   (==) a b = (==) @Rational (diagramToRatio a) (diagramToRatio b)
 
 instance Show PitchFactorDiagram where
-  show pfd = take 5 (show (diagramToRatio @Double pfd) ++ repeat '0') ++ " {" ++ (init . tail $ show (getFactors pfd)) ++ "}"
+  show pfd = take 5 (show (diagramToRatio @Double pfd) ++ repeat '0') ++ " {" ++ (concat . intersperse "," . fmap showSigned . take 5 $ getFactors pfd ++ repeat 0) ++ "}"
+    where
+      showSigned x = if x >= 0 then '+' : show x else show x
 
 instance Ord PitchFactorDiagram where
   compare a b = compare @Rational (diagramToRatio a) (diagramToRatio b)
@@ -50,6 +78,9 @@ instance Monoid PitchFactorDiagram where
 -- | 'PitchFactorDiagram's are combined by multiplying their underlying ratios (adding factors).
 instance Semigroup PitchFactorDiagram where
   (<>) = addPFD
+
+pettyDissMeasure :: PitchFactorDiagram -> Integer
+pettyDissMeasure = floor . diagramToRatio @Double . Factors . map abs . getFactors
 
 -- | Convert a factor diagram to the underlying ratio by raising each prime (starting from two) to the power in the factor list. For instance, going up two perfect fifths and down three major thirds yields:
 -- @
@@ -105,6 +136,9 @@ invertPFD = scalePFD (-1)
 addPFD :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
 addPFD a b = Factors . map getSum $ salign (map Sum $ getFactors a) (map Sum $ getFactors b)
 
+makePFDGoUp :: PitchFactorDiagram -> PitchFactorDiagram
+makePFDGoUp pfd = if pfd > Factors [] then pfd else invertPFD pfd
+
 -- | Prints the natural numbers from the given value up to @128@, highlighting primes and powers of two.
 -- Interesting musical intervals are build out of the relative distance of a prime between the two
 -- nearest powers of two.
@@ -115,40 +149,62 @@ printTheSequence k
   | isPrime k = putStr ("(" ++ show k ++ ")") >> printTheSequence (k+1)
   | otherwise = putStr " . " >> printTheSequence (k+1)
 
-newtype Chord = Chord {getNotes :: Set.Set PitchFactorDiagram}
+newtype ChordVoicing = ChordVoicing {getVoices :: Set.Set PitchFactorDiagram}
 
-instance SummaryChar Chord where
-  sumUp = head . show . chordSize
+newtype Chord = Chord {getNotes :: Set.Set PitchClass}
+
+instance SummaryChar ChordVoicing where
+  sumUp = head . show . countVoices
 
 chordSize :: Chord -> Int
 chordSize = Set.size . getNotes
 
-chordOf :: [PitchFactorDiagram] -> Chord
+countVoices :: ChordVoicing -> Int
+countVoices = Set.size . getVoices
+
+chordOf :: [PitchClass] -> Chord
 chordOf = Chord . Set.fromList
 
-rebaseChord :: PitchFactorDiagram -> Chord -> Chord
+voiceChord :: [PitchFactorDiagram] -> ChordVoicing
+voiceChord = ChordVoicing . Set.fromList
+
+rebaseChord :: PitchFactorDiagram -> ChordVoicing -> ChordVoicing
 rebaseChord p = onNotes (addPFD p)
 
-chordPitches :: Chord -> [PitchFactorDiagram]
+chordOver :: PitchFactorDiagram -> Chord -> ChordVoicing
+chordOver pfd = ChordVoicing . Set.map (addPFD pfd . classInOctave 0) . getNotes
+
+chordPitches :: Chord -> [PitchClass]
 chordPitches = Set.toList . getNotes
 
-onNotes :: (PitchFactorDiagram -> PitchFactorDiagram) -> Chord -> Chord
-onNotes f (Chord c) = Chord $ Set.map f c
+listVoices :: ChordVoicing -> [PitchFactorDiagram]
+listVoices = Set.toList . getVoices
 
-addPitch :: PitchFactorDiagram -> Chord -> Chord
+onNotes :: (PitchFactorDiagram -> PitchFactorDiagram) -> ChordVoicing -> ChordVoicing
+onNotes f (ChordVoicing c) = ChordVoicing $ Set.map f c
+
+addPitch :: PitchClass -> Chord -> Chord
 addPitch p (Chord c) = Chord (Set.insert p c)
 
-invChrd :: Int -> Chord -> Chord
+invChrd :: Int -> ChordVoicing -> ChordVoicing
 invChrd 0 c = c
-invChrd k (Chord c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (Chord $ Set.insert (addPFD (Factors [1]) p) c')
+invChrd k (ChordVoicing c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (ChordVoicing $ Set.insert (addPFD (Factors [1]) p) c')
 
+addPC :: PitchClass -> PitchClass -> PitchClass
+addPC a b = ClassFactors . map getSum $ salign (map Sum $ getClassFactors a) (map Sum $ getClassFactors b)
+
+{-
 voiceChord :: [Int] -> Chord -> Chord
 voiceChord voicing c = if maximum voicing < chordSize c
   then let ps = Set.toList (getNotes c) in Chord . foldl z Set.empty . map (\k -> ps !! k) $ voicing
   else error $ "voiceChord " ++ show voicing ++ " called on chord " ++ show c ++ " of size " ++ show (chordSize c)
   where
     z s p = if (\m -> case m of {Just _ -> True; Nothing -> False}) (Set.lookupGE p s) then z s (addPFD (Factors [1]) p) else Set.insert p s
+-}
 
+chordRoot :: Chord -> PitchClass
+chordRoot = Set.findMin . getNotes
+{-
 closedFPH :: Int -> Chord -> Chord
 closedFPH = closedFPHOver 0
 
@@ -156,7 +212,7 @@ closedFPHOver :: Int -> Int -> Chord -> Chord
 closedFPHOver bass ov c = if chordSize c >= 3
   then voiceChord [bass,ov,(ov + 1) `mod` 3, (ov + 2) `mod` 3] c
   else error $ "closedFPHOver chord of size " ++ show (chordSize c)
-
+-}
 instance Show Chord where
   show c = "<" ++ (init . tail . show . chordPitches $ c) ++ ">"
 
@@ -170,3 +226,16 @@ consonantHalfway x y = countPFDFuzzy $ num/denom
     --denom = sum $ zipWith (\a b -> fromIntegral a * log (fromIntegral b)) (zipWith (-) (getFactors y) (getFactors x ++ repeat 0)) primes
     denom = log $ diagramToRatio $ addPFD y (invertPFD x)
 
+chordCeil :: PitchFactorDiagram -> Chord -> PitchFactorDiagram
+chordCeil p c = let (_l,g) = Set.split pc (getNotes c) in case Set.lookupMin g of
+  Just g' -> classInOctave (getOctave p) g'
+  Nothing -> classInOctave (getOctave p + 1) $ Set.findMin (getNotes c)
+  where
+    pc = getPitchClass p
+
+chordFloor :: PitchFactorDiagram -> Chord -> PitchFactorDiagram
+chordFloor p c = let (l,_g) = Set.split pc (getNotes c) in case Set.lookupMax l of
+  Just l' -> classInOctave (getOctave p) l'
+  Nothing -> classInOctave (getOctave p - 1) $ Set.findMax (getNotes c)
+  where
+    pc = getPitchClass p

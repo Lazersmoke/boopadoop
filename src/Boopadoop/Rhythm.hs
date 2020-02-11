@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TupleSections #-}
@@ -55,6 +56,12 @@ reverseTimeStream = go EndStream
   where
     go acc EndStream = acc
     go acc (TimeStream t x xs) = go (TimeStream t x acc) xs
+
+limitTimeStream :: Rational -> TimeStream a -> TimeStream a
+limitTimeStream !tmax (TimeStream t x xs) = if t < tmax
+  then TimeStream t x (limitTimeStream (tmax - t) xs)
+  else TimeStream tmax x EndStream
+limitTimeStream _ EndStream = EndStream
 
 overTimings :: (Int -> a -> b) -> Timed a -> Timed b
 overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs

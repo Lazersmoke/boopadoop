@@ -39,26 +39,27 @@ soundPFD pfd = testWave (1.95) "soundPFD" . discretize . tickTable stdtr . sinWa
 -- In key of Bm
 metallicaOneSoloArps :: Beat PitchFactorDiagram
 metallicaOneSoloArps = equalTime . fmap (repeatBeat 8) $ 
-  [arpegiateLike [2,1,0] $ rebaseChord perfectFourth minorChord -- Em
-  ,arpegiateLike [2,0,1] $ rebaseChord minorSecond (invChrd 1 majorChord) -- C
-  ,arpegiateLike [2,1,0] $ minorChord -- Bm
-  ,arpegiateLike [2,1,0] $ rebaseChord (invertPFD majorThird) (invChrd 1 majorChord) -- G
-  ,arpegiateLike [2,1,0] $ rebaseChord (Factors [-4,1,1]) minorChord -- Am
-  ,arpegiateLike [2,1,0] $ rebaseChord (addPFD (invertPFD perfectFifth) minorSecond) (invChrd 1 minorChord) -- F
+  [arpegiateLike [2,1,0] $ chordOver (classInOctave 0 perfectFourth) minorChord -- Em
+  ,arpegiateLike [2,0,1] $ invChrd 1 $ chordOver (classInOctave 0 minorSecond) majorChord -- C
+  ,arpegiateLike [2,1,0] $ chordOver (classInOctave 0 unison) minorChord -- Bm
+  ,arpegiateLike [2,1,0] $ invChrd 1 $ chordOver (classInOctave (-1) minorSixth) majorChord -- G
+  ,arpegiateLike [2,1,0] $ chordOver (Factors [-4,1,1]) minorChord -- Am
+  ,arpegiateLike [2,1,0] $ invChrd 1 $ chordOver (classInOctave (-1) $ addPC perfectFourth minorSecond) minorChord -- F
   ]
 
 
 
 metallicaTest :: GlobalMuSyncMagic -> Wavetable
-metallicaTest = fmap (fmap getValue) . composeMuSync (stdtr * 7) . fmap (fmap (fmap discretize . tickTable stdtr) . fmap (modulate (\e s -> fmap (*e) s) env) . sinMuSync) . toConcreteKey (intervalOf (addPFD (invertPFD octave) majorSecond) concertA) $ metallicaOneSoloArps
+metallicaTest = fmap (fmap getValue) . composeMuSync (stdtr * 7) . fmap (fmap (fmap discretize . tickTable stdtr) . fmap (modulate (\e s -> fmap (*e) s) env) . sinMuSync) . toConcreteKey (intervalOf (classInOctave (-1) majorSecond) concertA) $ metallicaOneSoloArps
   where
     env = envelope 0 0 0.05 0.01 0.5 0.01
 
 metallicaSlurred :: [Discrete]
-metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discretize . tickTable stdtr . amplitudeModulate env . sinWave) . toConcreteKey (intervalOf (invertPFD minorSeventh) concertA) $ metallicaOneSoloArps
+metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discretize . tickTable stdtr . amplitudeModulate env . sinWave) . toConcreteKey (intervalOf (classInOctave (-1) (complPitchClass minorSeventh)) concertA) $ metallicaOneSoloArps
   where
     env = envelope 0 0.01 0.07 0.01 0.5 0.005
 
+{-
 fphExamp :: Beat Chord
 fphExamp = RoseBeat $
   [(2,Beat $ closedFPH 1 $ rebaseChord unison majorChord)
@@ -89,6 +90,7 @@ fphExamp' = fromClosedFPH
   ,(1,2,invertPFD perfectFourth,majorChord)
   ,(4,1,unison,majorChord)
   ]
+-}
 
 testStream :: [Discrete]
 testStream = streamSlurs 150 $ RoseBeat
@@ -98,9 +100,9 @@ testStream = streamSlurs 150 $ RoseBeat
   ]
 
 ukeTuning :: Int -> Double
-ukeTuning n = intervalOf (scalePFD (fromIntegral n) perfectFourth) lowG
+ukeTuning n = intervalOf (scalePFD (fromIntegral n) $ classInOctave 0 perfectFourth) lowG
   where
-    lowG = intervalOf (addPFD (invertPFD octave) minorSeventh) concertA
+    lowG = intervalOf (classInOctave (-1) minorSeventh) concertA
 
 ukeSoundTable :: Int -> Int -> Wavetable
 ukeSoundTable s f = discretize . tickTable stdtr . sinWave $ (ukeTuning (s - 1)) * semi ** fromIntegral f
@@ -197,14 +199,14 @@ ukeEnvelope = discretizeEnvelope stdtr $ Envelope 0 0.01 0.05 0.01 0.5 0.01
 
 theCanon :: Beat PitchFactorDiagram
 theCanon = equalTime . fmap (repeatBeat 2 . arpegiateLike [2,0,1,2,1,0,1,0,2,0,1,2]) $ 
-  [rebaseChord octave majorChord -- I
-  ,rebaseChord perfectFifth majorChord -- V
-  ,rebaseChord majorSixth minorChord -- vi
-  ,invChrd 1 majorChord -- I6
-  ,rebaseChord perfectFourth majorChord -- IV
-  ,rebaseChord octave majorChord -- I
-  ,rebaseChord perfectFourth majorChord -- IV
-  ,rebaseChord perfectFifth majorChord -- V
+  [chordOver (classInOctave 1 unison) majorChord -- I
+  ,chordOver (classInOctave 0 perfectFifth) majorChord -- V
+  ,chordOver (classInOctave 0 majorSixth) minorChord -- vi
+  ,invChrd 1 $ chordOver (classInOctave 0 unison) majorChord -- I6
+  ,chordOver (classInOctave 0 perfectFourth) majorChord -- IV
+  ,chordOver (classInOctave 1 unison) majorChord -- I
+  ,chordOver (classInOctave 0 perfectFourth) majorChord -- IV
+  ,chordOver (classInOctave 0 perfectFifth) majorChord -- V
   ]
 exampleModulator :: Waveform Tick Double
 exampleModulator = tickTable stdtr . modulate (\x -> oscAbout (1/stdtr) (x/(3*stdtr))) (sinWave 0.5) $ sinWave 0.25
@@ -245,7 +247,7 @@ blueBossaRiff :: Beat PitchFactorDiagram
 blueBossaRiff = RoseBeat
   [(1,fmap fromMajorScale $ RoseBeat walk)
   ,(1,fmap fromMajorScale . fmap (subtract 1) $ RoseBeat $ drop 1 $ walk)
-  ,(1,fmap (addPFD $ invertPFD majorSecond) $ fmap fromMajorScale $ RoseBeat otherWalk)
+  ,(1,fmap (classInterval majorSecond) $ fmap fromMajorScale $ RoseBeat otherWalk)
   ]
   where
     otherWalk =

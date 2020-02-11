@@ -17,14 +17,14 @@ listenWavestream = listenWavestream' 5
 listenWavetable :: Wavetable -> IO ()
 listenWavetable = listenWavestream . streamWavetable
 
-listenChord :: Chord -> IO ()
-listenChord = listenWavetable . tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . chordPitches
+listenChord :: ChordVoicing -> IO ()
+listenChord = listenWavetable . tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . listVoices
 
-listenArpChord :: Chord -> IO ()
+listenArpChord :: ChordVoicing -> IO ()
 listenArpChord = listenWavetable . compose (stdtr * 3) . fmap (tickTable stdtr . discretize . sinWave . (*concertA) . diagramToRatio) . arpegiate
 
-listenChords :: Beat Chord -> IO ()
-listenChords = listenWavetable . mediumFO . compose (stdtr * 7) . fmap (tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . chordPitches)
+listenChords :: Beat ChordVoicing -> IO ()
+listenChords = listenWavetable . mediumFO . compose (stdtr * 7) . fmap (tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . listVoices)
   where
     mediumFO :: Wavetable -> Wavetable
     mediumFO = amplitudeModulate (tickTable stdtr . discretize . fmap abs $ triWave 3)
@@ -46,7 +46,11 @@ listenTimedTimbreKey k timbre = listenUnboundedWavestream . composeTimed tempo .
 listenTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe PitchFactorDiagram) -> IO ()
 listenTimeStreamTimbreKey k timbre = listenUnboundedWavestream . timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
   where
+    tempo :: Int
     tempo = floor $ stdtr / (4 :: Double)
+
+listenTimeStreamFollow :: Double -> (Double -> Wavetable) -> TimeStream (Maybe PitchFactorDiagram) -> IO ()
+listenTimeStreamFollow k timbre ts = listenUnboundedWavestream . meshWavestreams . fmap timbre . followValue' stdtr 0.5 . stepCompose (8/stdtr) . (fmap . fmap) (flip intervalOf k) $ ts
 
 listenTimeStream :: TimeStream Wavetable -> IO ()
 listenTimeStream = listenWavestream . timeStreamToValueStream stdtr
@@ -71,9 +75,6 @@ listenSolfeck = listenSolfeckTimbre (waveTimbre sinWave)
 
 listenSolfeckTimbre :: (Double -> Wavetable) -> String -> IO ()
 listenSolfeckTimbre tim = listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) tim . solFeck
-
-powerChordify :: PitchFactorDiagram -> [PitchFactorDiagram]
-powerChordify p = [p, addPFD perfectFifth p, addPFD octave p]
 
 analyzeWavestream :: Double -> [Discrete] -> IO ()
 analyzeWavestream t w = listenWavestream' t w *> dumpFiniteWavestreamToScatter (take (floor $ stdtr * t) $ w)

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
 -- | A music theory library for just intonation and other mathematically pure ideas.
@@ -15,6 +16,7 @@ module Boopadoop
 import qualified Data.WAVE as WAVE
 import Control.Monad.ST
 import Control.Monad
+import Control.Applicative
 import Boopadoop.Diagram
 import Boopadoop.Rhythm
 import Boopadoop.Interval
@@ -22,6 +24,7 @@ import Boopadoop.Discrete
 import Data.List
 import Data.Int
 import Data.Complex
+import qualified Data.Vector.Fixed as FV
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Unboxed as Vector
 
@@ -152,7 +155,7 @@ emuVCO freqSelect w = go 0 0
 emuVCO' :: [Double] -> Waveform Double a -> [a]
 emuVCO' fs w = go fs 0
   where
-    go freqSelect sampPoint = let (skip:ss) = freqSelect in sample w sampPoint : go ss (sampPoint + skip)
+    go freqSelect !sampPoint = let (skip:ss) = freqSelect in sample w sampPoint : go ss (sampPoint + skip)
 
 niceVCO :: Double -> [Double] -> Waveform Double a -> [a]
 niceVCO amp fs = emuVCO' (fmap (\f -> (amp ** f)/stdtr) fs)
@@ -332,14 +335,6 @@ buildChord relPitches root = balanceChord $ map (triWave . (root *)) relPitches
 -- (Warning: may be loud)
 buildChordNoBalance :: [Double] -> Double -> DWave
 buildChordNoBalance relPitches root = mergeWaves $ map (triWave . (root *)) relPitches
-
--- | Builds a just-intonated major chord over the given root pitch
-majorChordOver :: Double -> DWave
-majorChordOver = buildChord
-  [1
-  ,diagramToRatio majorThird
-  ,diagramToRatio perfectFifth
-  ]
 
 -- | Builds an equal temperament minor chord over the given root pitch
 minorChordOver :: Double -> DWave
@@ -526,6 +521,24 @@ ladderFilter sampleRate reso cutoffs inputs = scanl stepSt (1e-6,2e-6,0,0) $ zip
       k4 = fmapTup (h *) $ rkf i (zipTup (+) k3 x)
       in zipTup (\xi ki -> xi + ki/6) x $ zipTup (+) (zipTup (+) (fmapTup (*2) k2) (fmapTup (*2) k3)) (zipTup (+) k1 k4)
 
+ladderFilter' :: Double -> [Double] -> [Double] -> [Double] -> [(Double,Double,Double,Double)]
+ladderFilter' sampleRate reso cutoffs inputs = fmap (FV.convert :: FV.VecList 4 Double -> (Double,Double,Double,Double)) $ rkSolveStepSize (1/sampleRate) rkf (FV.mk4 1e-6 1e-6 1e-6 1e-6) (zip3 reso cutoffs inputs)
+  where
+    rkf (r,c,i) x = let cut = 2 * pi * c in FV.mk4 (cut * (i - r * (x FV.! 2) - (x FV.! 0))) (cut * (x FV.! 0 - x FV.! 1)) (cut * (x FV.! 1 - x FV.! 2)) (cut * (x FV.! 2 - x FV.! 3))
+
+rkSolve :: Applicative f => (i -> f Double -> f Double) -> f Double -> [i] -> [f Double]
+rkSolve rkf = scanl stepSt
+  where
+    stepSt x i = let
+      k1 = rkf i x
+      k2 = rkf i (liftA2 (\k xi -> xi + k/2) k1 x)
+      k3 = rkf i (liftA2 (\k xi -> xi + k/2) k2 x)
+      k4 = rkf i (liftA2 (+) k3 x)
+      in liftA2 (\xi ki -> xi + ki/6) x $ liftA2 (+) (liftA2 (+) (fmap (*2) k2) (fmap (*2) k3)) (liftA2 (+) k1 k4)
+
+rkSolveStepSize :: Applicative f => Double -> (i -> f Double -> f Double) -> f Double -> [i] -> [f Double]
+rkSolveStepSize h rkf = rkSolve ((fmap (* h) .) . rkf)
+
 scaledDrive :: Double -> Double
 scaledDrive drv = (1 + drv) ** 5
 
@@ -547,9 +560,15 @@ saxProfile = sampleFrom $ \f -> let x = f/fb in sqrt (n * x/(1 + x**7))
     n = 1.088910
 
 synthFromDiscreteProfile :: [(Double,Double)] -> Wavetable
-synthFromDiscreteProfile fs = {-solidSlice 0 (truncate $ stdtr/(1 :: Double)) .-} tickTable stdtr . discretize . mergeWaves . fmap (\(f,amp) -> fmap (*(normFactor * amp)) $ sinWave f) $ fs
+synthFromDiscreteProfile fs = {-solidSlice 0 (truncate $ stdtr/(1 :: Double)) .-} tickTable stdtr . discretize . mergeWaves . fmap (\(f,amp) -> fmap (*(normFactor * amp)) $ sinWaveWithPhase f f) $ fs
   where
     normFactor = 0.9/(sum $ fmap snd fs)
+
+harmonicEquationToDiscreteProfile :: (Double -> Double) -> (Double -> Double) -> Double -> [(Double,Double)]
+harmonicEquationToDiscreteProfile oddF evenF f0 = go (15 :: Int)
+  where
+    go 0 = []
+    go k = (fromIntegral k * f0,(if even k then evenF else oddF) $ fromIntegral k) : go (k-1)
 
 discSaxProfile :: [(Double,Double)]
 discSaxProfile = f1 ++ f2
@@ -612,8 +631,8 @@ genSaxProfile f0 = f1 ++ f2
 fakedSaxTimbre :: Double -> Wavetable
 fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile'
 
-chordSinTimbre :: Chord -> Double -> Wavetable
-chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ chordPitches c
+chordSinTimbre :: ChordVoicing -> Double -> Wavetable
+chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ listVoices c
 
 {-
 sampledConvolve modf profile w = sampleFrom $ \p -> modf (sample (sample profile p) p) (sample w p)

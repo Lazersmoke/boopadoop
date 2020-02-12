@@ -7,7 +7,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Boopadoop.Rack where
 
-import Boopadoop
 import GHC.Generics
 import Data.Aeson
 import Data.Text(Text)
@@ -19,7 +18,6 @@ import Foreign.C
 import Foreign.Ptr
 --import Foreign.ForeignPtr
 import Foreign.Storable
-import Foreign.Marshal.Alloc
 
 {-
 modules": [

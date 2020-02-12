@@ -332,7 +332,7 @@ data PlayingContext = PlayingContext
   ,playingHistory :: TimeStream PitchFactorDiagram -- ^ Looks backward into history
   ,rangeLowerBound :: Maybe PitchFactorDiagram
   ,rangeUpperBound :: Maybe PitchFactorDiagram
-  ,randomGen :: StdGen
+  ,randomGen :: !StdGen
   }
 
 defaultPlayingContext :: StdGen -> PlayingContext
@@ -348,8 +348,12 @@ defaultPlayingContext rg = PlayingContext
   ,randomGen = rg
   }
 
-composeAlong :: (PlayingContext -> (PitchFactorDiagram,String,Rational,String,PlayingContext)) -> PlayingContext -> TimeStream PitchFactorDiagram
-composeAlong f pc = trace (cString ++ show x ++ " via " ++ whatHappened ++ "\nTiming info: (" ++ show t ++ ") via " ++ whatHappenedT) $ TimeStream t x (composeAlong f pc')
+followLeads :: [CompositionRule Rational] -> [CompositionRule PitchFactorDiagram] -> PlayingContext -> TimeStream Chord -> TimeStream (PlayingContext,PitchFactorDiagram)
+followLeads trs prs pc0 (TimeStream t lc lcs) = let ((pc',_pfdLast),ts) = branchAfterTimeStream (t * 15) (composeAlong (ruledPlaying trs prs) (pc0 {leadChord = Just lc})) (followLeads trs prs pc' lcs) in ts
+followLeads _ _ _ EndStream = EndStream
+
+composeAlong :: (PlayingContext -> (PitchFactorDiagram,String,Rational,String,PlayingContext)) -> PlayingContext -> TimeStream (PlayingContext,PitchFactorDiagram)
+composeAlong f pc = trace (cString ++ show x ++ " via " ++ whatHappened ++ "\nTiming info: (" ++ show t ++ ") via " ++ whatHappenedT) $ TimeStream t (pc',x) (composeAlong f pc')
   where
     (!x,!whatHappened,!t,!whatHappenedT,!pc') = f pc
     cString = case lastNoteCtx pc of
@@ -370,13 +374,13 @@ ruledPlaying trules rules ctx = (nextPFD,whatHappened,nextTiming,whatHappenedT,c
 newtype CompositionRule a = CompositionRule {triggerApply :: PlayingContext -> Maybe (String,a)}
 
 skipStep :: CompositionRule PitchFactorDiagram
-skipStep = CompositionRule $ \ctx -> effectiveChord ctx >>= \ec -> lastNoteCtx ctx >>= \l -> case classifyLI ctx of
-  AscSkip -> pure $ ("skipped up, so step down now",chordFloor l ec)
-  DecSkip -> pure $ ("skipped down, so step up now",chordCeil l ec)
+skipStep = CompositionRule $ \ctx -> effectiveKey ctx >>= \ek -> lastNoteCtx ctx >>= \l -> case classifyLI ctx of
+  AscSkip -> pure $ ("skipped up, so step down now",chordFloor l ek)
+  DecSkip -> pure $ ("skipped down, so step up now",chordCeil l ek)
   _ -> Nothing
 
 arpLC :: Bool -> CompositionRule PitchFactorDiagram
-arpLC upwards = CompositionRule $ \ctx -> leadChord ctx >>= \lc -> lastNoteCtx ctx >>= \l -> pure $ if upwards
+arpLC upwards = CompositionRule $ \ctx -> leadChord ctx >>= \lc -> lastNoteCtx ctx >>= \l -> if not (Set.member (getPitchClass l) $ getNotes lc) then Nothing else pure $ if upwards
   then ("arpeggiate upward on lead chord (" ++ show lc ++ ")",chordCeil l lc)
   else ("arpeggiate downward on lead chord (" ++ show lc ++ ")",chordFloor l lc)
 
@@ -410,9 +414,21 @@ continueStepping :: CompositionRule PitchFactorDiagram
 continueStepping = CompositionRule $ \ctx -> lastNoteCtx ctx >>= \l -> case classifyLI ctx of
   AscStep -> effectiveKey ctx >>= \ek -> pure ("Continue stepping upward",chordCeil l ek)
   DecStep -> effectiveKey ctx >>= \ek -> pure ("Continue stepping downward",chordFloor l ek)
-  AscSkip -> leadChord ctx >>= \lc -> pure ("Continue skipping upward",chordCeil l lc)
-  DecSkip -> leadChord ctx >>= \lc -> pure ("Continue skipping downward",chordFloor l lc)
+  AscSkip -> Nothing --leadChord ctx >>= \lc -> pure ("Continue skipping upward",chordCeil l lc)
+  DecSkip -> Nothing --leadChord ctx >>= \lc -> pure ("Continue skipping downward",chordFloor l lc)
   NoChange -> Nothing
+
+diatonicResolutionDownToRoot :: CompositionRule PitchFactorDiagram
+diatonicResolutionDownToRoot = CompositionRule $ \ctx -> effectiveKey ctx >>= \ek -> lastNoteCtx ctx >>= \l -> let theZero = classInOctave (getOctave l) (chordRoot ek) in if addPFD l (invertPFD theZero) <= classInOctave 0 majorSecond
+  then pure ("Down to root!",theZero)
+  else Nothing
+
+hackyEightToSevenResolution :: CompositionRule PitchFactorDiagram
+hackyEightToSevenResolution = CompositionRule $ \ctx -> leadChord ctx >>= \lc -> lastNoteCtx ctx >>= \l -> if chordSize lc >= 2
+  then let theFifth = Set.elemAt 2 $ getNotes lc in if (addPC (getPitchClass l) (complPitchClass theFifth) <= minorSecond) && l /= classInOctave (getOctave l) theFifth
+    then pure ("Down to fifth!",classInOctave (getOctave l) theFifth)
+    else Nothing
+  else Nothing 
 
 allNoteRules :: [CompositionRule PitchFactorDiagram]
 allNoteRules =
@@ -420,6 +436,8 @@ allNoteRules =
   ,keepRangeBounds
   ,stepToCenter
   ,leadingTone
+  ,diatonicResolutionDownToRoot
+  ,hackyEightToSevenResolution
   ,stepToTarget
   ,arpLC True
   ,arpLC False

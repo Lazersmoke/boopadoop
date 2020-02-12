@@ -169,7 +169,7 @@ voiceChord :: [PitchFactorDiagram] -> ChordVoicing
 voiceChord = ChordVoicing . Set.fromList
 
 rebaseChord :: PitchFactorDiagram -> ChordVoicing -> ChordVoicing
-rebaseChord p = onNotes (addPFD p)
+rebaseChord p = onVoices (addPFD p)
 
 chordOver :: PitchFactorDiagram -> Chord -> ChordVoicing
 chordOver pfd = ChordVoicing . Set.map (addPFD pfd . classInOctave 0) . getNotes
@@ -180,8 +180,11 @@ chordPitches = Set.toList . getNotes
 listVoices :: ChordVoicing -> [PitchFactorDiagram]
 listVoices = Set.toList . getVoices
 
-onNotes :: (PitchFactorDiagram -> PitchFactorDiagram) -> ChordVoicing -> ChordVoicing
-onNotes f (ChordVoicing c) = ChordVoicing $ Set.map f c
+onVoices :: (PitchFactorDiagram -> PitchFactorDiagram) -> ChordVoicing -> ChordVoicing
+onVoices f (ChordVoicing c) = ChordVoicing $ Set.map f c
+
+onPitches :: (PitchClass -> PitchClass) -> Chord -> Chord
+onPitches f (Chord c) = Chord $ Set.map f c
 
 addPitch :: PitchClass -> Chord -> Chord
 addPitch p (Chord c) = Chord (Set.insert p c)

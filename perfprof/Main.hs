@@ -36,51 +36,17 @@ playFile fileName = do
    waitWhilePlaying
 -}
 main :: IO ()
-main = getStdGen >>= \rg -> {-listenTimeStreamFollow-} listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) eqTimbre $ limitTimeStream 100 $ fmap Just $ composeAlong (ruledPlaying timingRuleSet ruleSet) (defaultPlayingContext rg)
+main = getStdGen >>= \rg -> {-listenTimeStreamFollow-} listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) eqTimbre $ limitTimeStream 100 $ fmap (Just . snd) $ followLeads timingRuleSet ruleSet (defaultPlayingContext rg) (perfectDescJazzFifths $ chordOf [unison,majorThird,perfectFifth])
+
+
+chords :: TimeStream Chord
+chords = TimeStream 2 (chordOf [unison,majorThird,perfectFifth,majorSeventh]) (TimeStream 1 (chordOf [perfectFourth,majorSixth,unison]) (TimeStream 1 (chordOf [perfectFifth,majorSeventh,majorSecond,perfectFourth]) chords))
+
+perfectDescJazzFifths :: Chord -> TimeStream Chord
+perfectDescJazzFifths startChord = TimeStream 1 startChord (perfectDescJazzFifths $ onPitches (addPC perfectFourth) startChord)
 
 ruleSet :: [CompositionRule PitchFactorDiagram]
-ruleSet =
-  [skipStep
-  ,skipStep
-  ,skipStep
-  ,skipStep
-  ,skipStep
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,keepRangeBounds
-  ,stepToCenter
-  ,continueStepping
-  ,continueStepping
-  ,continueStepping
-  ,continueStepping
-  ,continueStepping
-  ,continueStepping
-  ,leadingTone
-  ,leadingTone
-  ,leadingTone
-  ,leadingTone
-  ,leadingTone
-  ,leadingTone
-  ,leadingTone
-  ,stepToTarget
-  ,arpLC True
-  ,arpLC True
-  ,arpLC True
-  ,arpLC False
-  ,arpLC False
-  ,arpLC False
-  ]
+ruleSet = replicate 5 skipStep ++ replicate 30 keepRangeBounds ++ replicate 12 stepToCenter ++ replicate 8 leadingTone ++ replicate 8 continueStepping ++ replicate 6 (arpLC True) ++ replicate 6 (arpLC False)
 
 timingRuleSet :: [CompositionRule Rational]
 timingRuleSet =
@@ -96,9 +62,19 @@ timingRuleSet =
   ,repeatLastTiming
   ,repeatLastTiming
   ,repeatLastTiming
+  ,repeatLastTiming
+  ,repeatLastTiming
+  ,repeatLastTiming
+  ,repeatLastTiming
   ,halfSpeed
   ,halfSpeed
   ,halfSpeed
+  ,halfSpeed
+  ,halfSpeed
+  ,twiceAsFast
+  ,twiceAsFast
+  ,twiceAsFast
+  ,twiceAsFast
   ,twiceAsFast
   ,unitTiming
   ,boundSpeedAbove (1/16)

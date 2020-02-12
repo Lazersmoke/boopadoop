@@ -63,6 +63,18 @@ limitTimeStream !tmax (TimeStream t x xs) = if t < tmax
   else TimeStream tmax x EndStream
 limitTimeStream _ EndStream = EndStream
 
+branchAfterTimeStream :: Rational -> TimeStream a -> TimeStream a -> (a,TimeStream a)
+branchAfterTimeStream !tmax (TimeStream t x EndStream) branch = (x,TimeStream (min t tmax) x branch)
+branchAfterTimeStream !tmax (TimeStream t x xs) branch = if t < tmax
+  then let (l,ts) = branchAfterTimeStream (tmax - t) xs branch in (l,TimeStream t x ts)
+  else (x,TimeStream tmax x branch)
+branchAfterTimeStream _ EndStream branch = (error "branchAfterTimeStream: forced last element of empty stream",branch)
+
+forceLastAppendTimeStream :: TimeStream a -> a
+forceLastAppendTimeStream (TimeStream _ x EndStream) = x
+forceLastAppendTimeStream (TimeStream _ _ xs) = forceLastAppendTimeStream xs
+forceLastAppendTimeStream _ = error "forceLastAppendTimeStream: Empty TimeStream"
+
 overTimings :: (Int -> a -> b) -> Timed a -> Timed b
 overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs
 

@@ -32,6 +32,7 @@ dependencies:
 - bytestring
 - fixed-vector
 - random
+- time
 
 library:
   source-dirs: 
@@ -45,8 +46,9 @@ library:
   - -Wall
   c-sources: cbits/cstuff.cpp
   extra-libraries:
-  - Rack
   - stdc++
+  - ole32
+  - rtaudio
 
 executables:
   perfprof:

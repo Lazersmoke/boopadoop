@@ -12,6 +12,64 @@ import Data.Numbers.Primes
 import Data.Align (salign)
 import Boopadoop.Rhythm (SummaryChar(sumUp))
 
+data TwelveTone = TwelveTone Int
+
+instance Show TwelveTone where
+  show p = ("0123456789ab" !! ttPitch p) : show (ttOctave p)
+
+ttOctave :: TwelveTone -> Int
+ttOctave (TwelveTone k) = k `div` 12
+
+ttPitch :: TwelveTone -> Int
+ttPitch (TwelveTone k) = k `mod` 12
+
+ttScaleDown :: TwelveTone -> TwelveTone -> TwelveTone
+ttScaleDown root p = ttMap (subtract delta) p
+  where
+    delta = case ttInterval root p of
+      0 -> 1
+      1 -> 1
+      2 -> 2
+      3 -> 1
+      4 -> 2
+      5 -> 1
+      6 -> 1
+      7 -> 2
+      8 -> 1
+      9 -> 2
+      10 -> 1
+      11 -> 2
+      _ -> error "Too big of interval"
+
+
+ttScaleUp :: TwelveTone -> TwelveTone -> TwelveTone
+ttScaleUp root p = ttMap (+delta) p
+  where
+    delta = case ttInterval root p of
+      0 -> 2
+      1 -> 1
+      2 -> 2
+      3 -> 1
+      4 -> 1
+      5 -> 2
+      6 -> 1
+      7 -> 2
+      8 -> 1
+      9 -> 2
+      10 -> 1
+      11 -> 1
+      _ -> error "Too big of interval"
+
+ttMap :: (Int -> Int) -> TwelveTone -> TwelveTone
+ttMap f (TwelveTone k) = TwelveTone (f k)
+
+ttDiff :: TwelveTone -> TwelveTone -> TwelveTone
+ttDiff (TwelveTone a) (TwelveTone b) = TwelveTone (a - b)
+
+ttInterval :: TwelveTone -> TwelveTone -> Int
+ttInterval a b = ttPitch b - ttPitch a
+
+
 -- | 12 tone equal temperament semitone ratio. Equal to @2 ** (1/12)@.
 semi :: Floating a => a
 semi = 2 ** (1/12)

@@ -295,7 +295,7 @@ waveTimbre = fmap (discretize . tickTable stdtr)
 
 -- | Arbitrarily chosen standard tick rate, used in @'testWave'@
 stdtr :: Num a => a
-stdtr = 32000
+stdtr = 48000 --32000
 
 -- | Output the first @len@ seconds of the given @'Wavetable'@ to a @.wav@ file at the given path for testing.
 -- The volume is also attenuated by 50% to not blow out your eardrums.

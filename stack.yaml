@@ -65,10 +65,12 @@ extra-deps:
 # extra-include-dirs: [/path/to/dir]
 # extra-lib-dirs: [/path/to/dir]
 extra-lib-dirs:
-- Rack-SDK
 - cbits
+- C:\Users\Sam\Downloads\rtaudio-5.1.0\out\install\x64-Debug\lib
+- C:\Users\Sam\Downloads\rtaudio-5.1.0\out\install\x64-Debug\bin
+  #- Rack-SDK
 extra-include-dirs:
-- Rack-SDK/include
-- Rack-SDK/dep/include
+- cbits
+  #- Rack-SDK/dep/include
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor

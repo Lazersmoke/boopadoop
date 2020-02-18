@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 module Main where
 
 import Boopadoop.Example
@@ -7,6 +8,9 @@ import Boopadoop.Ideate
 import Boopadoop.Rack
 
 import System.Random
+import Control.Concurrent.MVar
+import Control.Concurrent
+import Data.IORef
 
 {-
 import Sound.ALUT
@@ -36,8 +40,30 @@ playFile fileName = do
    waitWhilePlaying
 -}
 main :: IO ()
-main = getStdGen >>= \rg -> {-listenTimeStreamFollow-} listenTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) eqTimbre $ limitTimeStream 100 $ fmap (Just . snd) $ followLeads timingRuleSet ruleSet (defaultPlayingContext rg) (perfectDescJazzFifths $ chordOf [unison,majorThird,perfectFifth])
+main = do
+  notes <- genMusic
+  let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (invertPFD octave) concertA) eqTimbre . fmap (Just . snd . getExplained) $ notes
+  ks <- newIORef False
+  pt <- newMVar ()
+  wt <- newMVar ()
+  startCoord <- newEmptyMVar
+  _ <- forkIO $ readMVar startCoord *> putStrLn "Start Now!!!!!!!!"
+  _ <- forkIO $ readMVar startCoord *> explainNotes (fmap getExplanation notes)
+  playThread <- forkIO $ (takeMVar pt *> threadDelay 100000 *> playWavestream startCoord ks ws *> putMVar pt ())
+  writeOutThread <- forkIO $ (takeMVar wt *> listenWavestream' 15 ws *> putMVar wt ())
+  putStrLn "Now playing! Press enter to stop"
+  _ <- getLine
+  putStr "Waiting for sound to stop playing..."
+  writeIORef ks True
+  _ <- takeMVar pt
+  putStrLn " Check!"
+  putStr "Waiting for listen.wav to be written..."
+  _ <- takeMVar wt
+  putStrLn " Check!"
+  putStrLn "Goodbye."
 
+genMusic :: IO (TimeStream (WithExplanation (PlayingContext,PitchFactorDiagram)))
+genMusic = getStdGen >>= \rg -> pure $ followLeads timingRuleSet ruleSet (defaultPlayingContext rg) (perfectDescJazzFifths $ chordOf [unison,majorThird,perfectFifth])
 
 chords :: TimeStream Chord
 chords = TimeStream 2 (chordOf [unison,majorThird,perfectFifth,majorSeventh]) (TimeStream 1 (chordOf [perfectFourth,majorSixth,unison]) (TimeStream 1 (chordOf [perfectFifth,majorSeventh,majorSecond,perfectFourth]) chords))

@@ -80,6 +80,9 @@ timeStreamToValueStream ticksPerCount = go (0 :: Tick)
       else go 0 xs
     go _ EndStream = []
 
+timeStreamToValueStreamChunked :: Rational -> TimeStream (Waveform Tick a) -> [[a]]
+timeStreamToValueStreamChunked ticksPerCount (TimeStream t x xs) = timeStreamToValueStream ticksPerCount (TimeStream t x EndStream) : timeStreamToValueStreamChunked ticksPerCount xs
+
 composeTimed :: Num a => Tick -> Timed (Waveform Tick a) -> [a]
 composeTimed beatTime (Timed timed) = go 0 timed
   where
@@ -323,22 +326,24 @@ meshWavestreams = go 0
     go !t (w:ws) = sample w t : go (t + 1) ws
     go _ _ = []
 
-data PlayingContext = PlayingContext
+data PlayingContext a = PlayingContext
   {leadChord :: Maybe Chord
   ,effectiveKey :: Maybe Chord
+  ,effectiveRoot :: Maybe a
   ,allowNCT :: Bool
   ,tensionPhase :: Maybe Double -- ^ In [0,1] phase of tension
-  ,pitchTarget :: Maybe PitchFactorDiagram
-  ,playingHistory :: TimeStream PitchFactorDiagram -- ^ Looks backward into history
-  ,rangeLowerBound :: Maybe PitchFactorDiagram
-  ,rangeUpperBound :: Maybe PitchFactorDiagram
+  ,pitchTarget :: Maybe a
+  ,playingHistory :: TimeStream a -- ^ Looks backward into history
+  ,rangeLowerBound :: Maybe a
+  ,rangeUpperBound :: Maybe a
   ,randomGen :: !StdGen
   }
 
-defaultPlayingContext :: StdGen -> PlayingContext
+defaultPlayingContext :: StdGen -> PlayingContext PitchFactorDiagram
 defaultPlayingContext rg = PlayingContext
   {leadChord = Just $ chordOf [unison,majorThird,perfectFifth,majorSeventh]
   ,effectiveKey = Just $ chordOf majorScale
+  ,effectiveRoot = Nothing
   ,allowNCT = False
   ,tensionPhase = Nothing
   ,pitchTarget = Nothing
@@ -348,89 +353,110 @@ defaultPlayingContext rg = PlayingContext
   ,randomGen = rg
   }
 
-followLeads :: [CompositionRule Rational] -> [CompositionRule PitchFactorDiagram] -> PlayingContext -> TimeStream Chord -> TimeStream (PlayingContext,PitchFactorDiagram)
-followLeads trs prs pc0 (TimeStream t lc lcs) = let ((pc',_pfdLast),ts) = branchAfterTimeStream (t * 15) (composeAlong (ruledPlaying trs prs) (pc0 {leadChord = Just lc})) (followLeads trs prs pc' lcs) in ts
+ttPC :: StdGen -> PlayingContext TwelveTone
+ttPC rg = PlayingContext
+  {leadChord = Just $ chordOf [unison,majorThird,perfectFifth,majorSeventh]
+  ,effectiveKey = Just $ chordOf majorScale
+  ,effectiveRoot = Nothing
+  ,allowNCT = False
+  ,tensionPhase = Nothing
+  ,pitchTarget = Nothing
+  ,playingHistory = TimeStream 1 (classInOctave 0 unison) (TimeStream 1 (classInOctave (-1) unison) EndStream)
+  ,rangeLowerBound = Just $ classInOctave (-1) unison
+  ,rangeUpperBound = Just $ classInOctave 1 unison
+  ,randomGen = rg
+  }
+
+data WithExplanation a = WithExplanation {getExplanation :: String, getExplained :: a}
+
+instance Show a => Show (WithExplanation a) where
+  show (WithExplanation why a) = "Use " ++ show a ++ " because " ++ why
+
+followLeads :: [CompositionRule PitchFactorDiagram Rational] -> [CompositionRule PitchFactorDiagram PitchFactorDiagram] -> PlayingContext PitchFactorDiagram -> TimeStream Chord -> TimeStream (WithExplanation (PlayingContext PitchFactorDiagram,PitchFactorDiagram))
+followLeads trs prs pc0 (TimeStream t lc lcs) = let (WithExplanation why (pc',_pfdLast),ts) = branchAfterTimeStream (t * 15) (composeAlong (ruledPlaying trs prs) (pc0 {leadChord = Just lc})) (followLeads trs prs pc' lcs) in ts
 followLeads _ _ _ EndStream = EndStream
 
-composeAlong :: (PlayingContext -> (PitchFactorDiagram,String,Rational,String,PlayingContext)) -> PlayingContext -> TimeStream (PlayingContext,PitchFactorDiagram)
-composeAlong f pc = trace (cString ++ show x ++ " via " ++ whatHappened ++ "\nTiming info: (" ++ show t ++ ") via " ++ whatHappenedT) $ TimeStream t (pc',x) (composeAlong f pc')
+composeAlong :: (PlayingContext PitchFactorDiagram -> (WithExplanation PitchFactorDiagram,WithExplanation Rational,PlayingContext PitchFactorDiagram)) -> PlayingContext PitchFactorDiagram -> TimeStream (WithExplanation (PlayingContext PitchFactorDiagram,PitchFactorDiagram))
+composeAlong f pc = TimeStream t (WithExplanation (whyX ++ "; " ++ whyT) (pc',x)) (composeAlong f pc')
   where
-    (!x,!whatHappened,!t,!whatHappenedT,!pc') = f pc
+    (WithExplanation whyX !x,WithExplanation whyT !t,!pc') = f pc
     cString = case lastNoteCtx pc of
       Just l -> "Compose from " ++ show l ++ " to "
       Nothing -> "Compose starting at "
 
-ruledPlaying :: [CompositionRule Rational] -> [CompositionRule PitchFactorDiagram] -> PlayingContext -> (PitchFactorDiagram,String,Rational,String,PlayingContext)
-ruledPlaying trules rules ctx = (nextPFD,whatHappened,nextTiming,whatHappenedT,ctx {playingHistory = TimeStream 1 nextPFD $ playingHistory ctx,randomGen = randomGen''})
+ruledPlaying :: [CompositionRule a Rational] -> [CompositionRule a a] -> PlayingContext a -> (WithExplanation a,WithExplanation Rational,PlayingContext a)
+ruledPlaying trules rules ctx = (WithExplanation whatHappened nextPFD,WithExplanation whatHappenedT nextTiming,ctx {playingHistory = TimeStream 1 nextPFD $ playingHistory ctx,randomGen = randomGen''})
   where
     possibleNextTimings = catMaybes $ (\r -> triggerApply r ctx) <$> trules
-    (whatHappenedT,nextTiming) = possibleNextTimings !! nextTimingIndex
+    (WithExplanation whatHappenedT nextTiming) = possibleNextTimings !! nextTimingIndex
     (nextTimingIndex,randomGen'') = randomR (0,length possibleNextTimings - 1) randomGen'
 
     possibleNextPFDs = catMaybes $ (\r -> triggerApply r ctx) <$> rules
-    (whatHappened,nextPFD) = possibleNextPFDs !! nextPFDIndex
+    (WithExplanation whatHappened nextPFD) = possibleNextPFDs !! nextPFDIndex
     (nextPFDIndex,randomGen') = randomR (0,length possibleNextPFDs - 1) (randomGen ctx)
 
-newtype CompositionRule a = CompositionRule {triggerApply :: PlayingContext -> Maybe (String,a)}
+newtype CompositionRule b a = CompositionRule {triggerApply :: PlayingContext b -> Maybe (WithExplanation a)}
 
-skipStep :: CompositionRule PitchFactorDiagram
-skipStep = CompositionRule $ \ctx -> effectiveKey ctx >>= \ek -> lastNoteCtx ctx >>= \l -> case classifyLI ctx of
-  AscSkip -> pure $ ("skipped up, so step down now",chordFloor l ek)
-  DecSkip -> pure $ ("skipped down, so step up now",chordCeil l ek)
-  _ -> Nothing
+--ttRuleToPFDRule :: CompositionRule TwelveTone -> CompositionRule PitchFactorDiagram
+--ttRuleToPFDRule =
 
-arpLC :: Bool -> CompositionRule PitchFactorDiagram
+skipStep :: CompositionRule TwelveTone TwelveTone
+skipStep = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> lastInterval (playingHistory ctx) >>= \(x'',x') -> let del = ttInterval x'' x' in if del > 2
+  then pure $ WithExplanation "skipped up, so step down now" (ttScaleUp r l)
+  else if del < (-2)
+    then pure $ WithExplanation "skipped down, so step up now" (ttScaleDown r l)
+    else Nothing
+
+arpLC :: Bool -> CompositionRule PitchFactorDiagram PitchFactorDiagram
 arpLC upwards = CompositionRule $ \ctx -> leadChord ctx >>= \lc -> lastNoteCtx ctx >>= \l -> if not (Set.member (getPitchClass l) $ getNotes lc) then Nothing else pure $ if upwards
-  then ("arpeggiate upward on lead chord (" ++ show lc ++ ")",chordCeil l lc)
-  else ("arpeggiate downward on lead chord (" ++ show lc ++ ")",chordFloor l lc)
+  then WithExplanation ("arpeggiate upward on lead chord (" ++ show lc ++ ")") (chordCeil l lc)
+  else WithExplanation ("arpeggiate downward on lead chord (" ++ show lc ++ ")") (chordFloor l lc)
 
-leadingTone :: CompositionRule PitchFactorDiagram
-leadingTone = CompositionRule $ \ctx -> effectiveKey ctx >>= \ek -> lastNoteCtx ctx >>= \l -> let theZero = classInOctave (getOctave l + 1) (chordRoot ek) in if addPFD (invertPFD l) theZero <= classInOctave 0 minorSecond
-  then pure ("Leading tone!",theZero)
+leadingTone :: CompositionRule TwelveTone TwelveTone
+leadingTone = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> if ttInterval l r == 1
+  then pure $ WithExplanation "Leading tone!" (ttScaleUp r l)
   else Nothing
 
-stepToTarget :: CompositionRule PitchFactorDiagram
+stepToTarget :: CompositionRule PitchFactorDiagram PitchFactorDiagram
 stepToTarget = CompositionRule $ \ctx -> pitchTarget ctx >>= \pt -> lastNoteCtx ctx >>= \l -> effectiveKey ctx >>= \ec -> pure $ if l > pt
-  then ("Step down towards target (" ++ show pt ++ ")",chordFloor l ec)
-  else ("Step up towards target (" ++ show pt ++ ")",chordCeil l ec)
+  then WithExplanation ("Step down towards target (" ++ show pt ++ ")") (chordFloor l ec)
+  else WithExplanation ("Step up towards target (" ++ show pt ++ ")") (chordCeil l ec)
 
-keepRangeBounds :: CompositionRule PitchFactorDiagram
+keepRangeBounds :: CompositionRule PitchFactorDiagram PitchFactorDiagram
 keepRangeBounds = CompositionRule $ \ctx -> do
   lb <- rangeLowerBound ctx
   ub <- rangeUpperBound ctx
   l <- lastNoteCtx ctx
   if l > ub
-    then (("Soft walk toward upper bound",) . chordFloor l <$> effectiveChord ctx) <|> Just ("Hard clamp to upper bound",ub)
+    then ((WithExplanation "Soft walk toward upper bound") . chordFloor l <$> effectiveChord ctx) <|> Just (WithExplanation "Hard clamp to upper bound" ub)
     else if l < lb
-      then (("Soft walk toward lower bound",) . chordCeil l <$> effectiveChord ctx) <|> Just ("Hard clamp to lower bound",lb)
+      then ((WithExplanation "Soft walk toward lower bound") . chordCeil l <$> effectiveChord ctx) <|> Just (WithExplanation "Hard clamp to lower bound" lb)
       else Nothing
 
-stepToCenter :: CompositionRule PitchFactorDiagram
+stepToCenter :: CompositionRule PitchFactorDiagram PitchFactorDiagram
 stepToCenter = CompositionRule $ \ctx -> lastNoteCtx ctx >>= \l -> effectiveChord ctx >>= \ec -> if l == classInOctave 0 unison then Nothing else pure $ if l > classInOctave 0 unison
-  then ("Step down towards center",chordFloor l ec)
-  else ("Step up towards center",chordCeil l ec)
+  then WithExplanation "Step down towards center" (chordFloor l ec)
+  else WithExplanation "Step up towards center" (chordCeil l ec)
 
-continueStepping :: CompositionRule PitchFactorDiagram
-continueStepping = CompositionRule $ \ctx -> lastNoteCtx ctx >>= \l -> case classifyLI ctx of
-  AscStep -> effectiveKey ctx >>= \ek -> pure ("Continue stepping upward",chordCeil l ek)
-  DecStep -> effectiveKey ctx >>= \ek -> pure ("Continue stepping downward",chordFloor l ek)
-  AscSkip -> Nothing --leadChord ctx >>= \lc -> pure ("Continue skipping upward",chordCeil l lc)
-  DecSkip -> Nothing --leadChord ctx >>= \lc -> pure ("Continue skipping downward",chordFloor l lc)
-  NoChange -> Nothing
+continueStepping :: CompositionRule TwelveTone TwelveTone
+continueStepping = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> lastInterval (playingHistory ctx) >>= \(x'',x') -> case ttInterval x'' x' of
+  1 -> pure $ WithExplanation "Continue stepping upward" (ttScaleUp r l)
+  2 -> pure $ WithExplanation "Continue stepping upward" (ttScaleUp r l)
+  -1 -> pure $ WithExplanation "Continue stepping downward" (ttScaleDown r l)
+  -2 -> pure $ WithExplanation "Continue stepping downward" (ttScaleDown r l)
+  _ -> Nothing
 
-diatonicResolutionDownToRoot :: CompositionRule PitchFactorDiagram
-diatonicResolutionDownToRoot = CompositionRule $ \ctx -> effectiveKey ctx >>= \ek -> lastNoteCtx ctx >>= \l -> let theZero = classInOctave (getOctave l) (chordRoot ek) in if addPFD l (invertPFD theZero) <= classInOctave 0 majorSecond
-  then pure ("Down to root!",theZero)
+diatonicResolutionDownToRoot :: CompositionRule TwelveTone TwelveTone
+diatonicResolutionDownToRoot = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> if ttInterval r l `elem` [1,2]
+  then pure $ WithExplanation "Down to root!" (ttMap (subtract $ ttInterval r l) l)
   else Nothing
 
-hackyEightToSevenResolution :: CompositionRule PitchFactorDiagram
-hackyEightToSevenResolution = CompositionRule $ \ctx -> leadChord ctx >>= \lc -> lastNoteCtx ctx >>= \l -> if chordSize lc >= 2
-  then let theFifth = Set.elemAt 2 $ getNotes lc in if (addPC (getPitchClass l) (complPitchClass theFifth) <= minorSecond) && l /= classInOctave (getOctave l) theFifth
-    then pure ("Down to fifth!",classInOctave (getOctave l) theFifth)
-    else Nothing
+hackyEightToSevenResolution :: CompositionRule TwelveTone TwelveTone
+hackyEightToSevenResolution = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> if ttInterval r l == 8
+  then pure $ WithExplanation "Down to fifth!" (ttMap (subtract 1) l)
   else Nothing 
-
-allNoteRules :: [CompositionRule PitchFactorDiagram]
+{-
+allNoteRules :: [CompositionRule TwelveTone]
 allNoteRules =
   [skipStep
   ,keepRangeBounds
@@ -443,26 +469,27 @@ allNoteRules =
   ,arpLC False
   ,continueStepping
   ]
+-}
 
-repeatLastTiming :: CompositionRule Rational
-repeatLastTiming = CompositionRule $ (fmap . fmap) ("Repeat last timing",) lastTimeCtx
+repeatLastTiming :: CompositionRule PitchFactorDiagram Rational
+repeatLastTiming = CompositionRule $ (fmap . fmap) (WithExplanation "Repeat last timing") lastTimeCtx
 
-unitTiming :: CompositionRule Rational
-unitTiming = CompositionRule $ const (Just ("Unit timing",1))
+unitTiming :: CompositionRule PitchFactorDiagram Rational
+unitTiming = CompositionRule $ const (Just (WithExplanation "Unit timing" 1))
 
-twiceAsFast :: CompositionRule Rational
-twiceAsFast = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> Just ("Twice as fast!",lt / 2)
+twiceAsFast :: CompositionRule PitchFactorDiagram Rational
+twiceAsFast = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> Just (WithExplanation "Twice as fast!" (lt / 2))
 
-halfSpeed :: CompositionRule Rational
-halfSpeed = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> Just ("Twice as fast!",lt / 2)
+halfSpeed :: CompositionRule PitchFactorDiagram Rational
+halfSpeed = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> Just (WithExplanation "Twice as fast!" (lt / 2))
 
-boundSpeedAbove :: Rational -> CompositionRule Rational
-boundSpeedAbove tmin = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> if lt < tmin then Just ("Hard lower bound",tmin) else Nothing
+boundSpeedAbove :: Rational -> CompositionRule PitchFactorDiagram Rational
+boundSpeedAbove tmin = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> if lt < tmin then Just (WithExplanation "Hard lower bound" tmin) else Nothing
 
-boundSpeedBelow :: Rational -> CompositionRule Rational
-boundSpeedBelow tmax = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> if lt > tmax then Just ("Hard upper bound",tmax) else Nothing
+boundSpeedBelow :: Rational -> CompositionRule PitchFactorDiagram Rational
+boundSpeedBelow tmax = CompositionRule $ \ctx -> lastTimeCtx ctx >>= \lt -> if lt > tmax then Just (WithExplanation "Hard upper bound" tmax) else Nothing
 
-allTimingRules :: [CompositionRule Rational]
+allTimingRules :: [CompositionRule PitchFactorDiagram Rational]
 allTimingRules =
   [repeatLastTiming
   ,halfSpeed
@@ -473,29 +500,29 @@ allTimingRules =
   ]
 
 
-lastInterval :: TimeStream PitchFactorDiagram -> PitchFactorDiagram
-lastInterval (TimeStream _ x (TimeStream _ y _)) = addPFD x (invertPFD y)
-lastInterval _ = Factors []
+lastInterval :: TimeStream a -> Maybe (a,a)
+lastInterval (TimeStream _ x (TimeStream _ y _)) = Just (y,x)
+lastInterval _ = Nothing
 
 absDiffPFD :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
 absDiffPFD x y = makePFDGoUp $ addPFD x (invertPFD y)
 
-classifyLI :: PlayingContext -> IntervalClassification
-classifyLI = classifyPFD . lastInterval . playingHistory
+--classifyLI :: PlayingContext PitchFactorDiagram -> IntervalClassification
+--classifyLI = classifyPFD . lastInterval . playingHistory
 
-effectiveChord :: PlayingContext -> Maybe Chord
+effectiveChord :: PlayingContext PitchFactorDiagram -> Maybe Chord
 effectiveChord ctx = case leadChord ctx of
   Just lc -> Just lc
   Nothing -> case effectiveKey ctx of
     Just ek -> Just ek
     Nothing -> Nothing
 
-lastNoteCtx :: PlayingContext -> Maybe PitchFactorDiagram
+lastNoteCtx :: PlayingContext a -> Maybe a
 lastNoteCtx context = case playingHistory context of
   (TimeStream _ x _) -> Just x
   EndStream -> Nothing
 
-lastTimeCtx :: PlayingContext -> Maybe Rational
+lastTimeCtx :: PlayingContext a -> Maybe Rational
 lastTimeCtx context = case playingHistory context of
   (TimeStream t _ _) -> Just t
   EndStream -> Nothing

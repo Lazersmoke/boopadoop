@@ -15,6 +15,9 @@ fromPitchList ps k = classInOctave (fromIntegral o) (ps !! i)
   where
     (o,i) = k `divMod` length ps
 
+ttPFD :: TwelveTone -> PitchFactorDiagram
+ttPFD (TwelveTone k) = fromDiatonic k
+
 classInterval :: PitchClass -> PitchFactorDiagram -> PitchFactorDiagram
 classInterval pc pfd = addPFD pfd $ classInOctave 0 pc
 

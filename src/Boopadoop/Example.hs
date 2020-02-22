@@ -5,8 +5,9 @@
 module Boopadoop.Example where
 
 import Boopadoop
-import Boopadoop.Ideate
+--import Boopadoop.Ideate
 import Debug.Trace
+import Data.Semigroup
 
 theFilter :: Wavetable
 theFilter = optimizeFilter (160) $ tickTable stdtr $ bandpassFilter concertA 100
@@ -24,18 +25,21 @@ testFourier = realDFT 100 44000 $ fWave
 fWave :: Wavetable
 fWave = solidSlice (-2000) (2000) . discretize . tickTable 44000 . sinWave $ concertA
 
+{-
 swung :: Wavetable
 swung = compose 16000 $ fmap sel swingIt
   where
     sel 0 = fastSin . floor $ stdtr/(concertA :: Double)
     sel _ = fastSin . floor $ (stdtr/concertA :: Double) / 2
 
+-}
 soundPFD :: PitchFactorDiagram -> IO ()
 soundPFD pfd = testWave (1.95) "soundPFD" . discretize . tickTable stdtr . sinWave . (*concertA) $ diagramToRatio pfd
 
 --confuse :: Wavetable
 --confuse = compose (2*stdtr) $ equalTime [Beat $ stdSin perfectFifth, Beat $ stdSin (consonantHalfway perfectFifth octave), Beat $ stdSin octave]
 
+{-
 -- In key of Bm
 metallicaOneSoloArps :: Beat PitchFactorDiagram
 metallicaOneSoloArps = equalTime . fmap (repeatBeat 8) $ 
@@ -47,17 +51,20 @@ metallicaOneSoloArps = equalTime . fmap (repeatBeat 8) $
   ,arpegiateLike [2,1,0] $ invChrd 1 $ chordOver (classInOctave (-1) $ addPC perfectFourth minorSecond) minorChord -- F
   ]
 
+-}
 
 
+{-
 metallicaTest :: GlobalMuSyncMagic -> Wavetable
-metallicaTest = fmap (fmap getValue) . composeMuSync (stdtr * 7) . fmap (fmap (fmap discretize . tickTable stdtr) . fmap (modulate (\e s -> fmap (*e) s) env) . sinMuSync) . toConcreteKey (intervalOf (classInOctave (-1) majorSecond) concertA) $ metallicaOneSoloArps
+metallicaTest = fmap (fmap getValue) . composeMuSync (stdtr * 7) . fmap (fmap (fmap discretize . tickTable stdtr) . fmap (modulate (\e s -> fmap (*e) s) env) . sinMuSync) . toConcreteKey (intervalOf (inOctave (-1) majorSecond) concertA) $ metallicaOneSoloArps
   where
     env = envelope 0 0 0.05 0.01 0.5 0.01
 
 metallicaSlurred :: [Discrete]
-metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discretize . tickTable stdtr . amplitudeModulate env . sinWave) . toConcreteKey (intervalOf (classInOctave (-1) (complPitchClass minorSeventh)) concertA) $ metallicaOneSoloArps
+metallicaSlurred = streamSlurs (stdtr * 7) . fmap ((3000,) . fmap (*0.4) . discretize . tickTable stdtr . amplitudeModulate env . sinWave) . toConcreteKey (intervalOf (inOctave (-1) (complPitchClass minorSeventh)) concertA) $ metallicaOneSoloArps
   where
     env = envelope 0 0.01 0.07 0.01 0.5 0.005
+-}
 
 {-
 fphExamp :: Beat Chord
@@ -73,7 +80,9 @@ fphExamp = RoseBeat $
   ,(1,Beat $ closedFPH 2 $ rebaseChord (invertPFD perfectFourth) majorChord) -- V
   ,(4,Beat $ addPitch (invertPFD octave) $ voiceChord [1,2,0] $ rebaseChord unison majorChord) -- I
   ]
+-}
 
+{-
 fromClosedFPH :: [(Int,Int,PitchFactorDiagram,Chord)] -> Beat Chord
 fromClosedFPH = RoseBeat . map (\(t,ov,p,c) -> (t,Beat $ closedFPH ov $ rebaseChord p c))
 
@@ -90,7 +99,6 @@ fphExamp' = fromClosedFPH
   ,(1,2,invertPFD perfectFourth,majorChord)
   ,(4,1,unison,majorChord)
   ]
--}
 
 testStream :: [Discrete]
 testStream = streamSlurs 150 $ RoseBeat
@@ -99,14 +107,17 @@ testStream = streamSlurs 150 $ RoseBeat
   ,(1,Beat (30,sampleFrom $ const 0.3))
   ]
 
+-}
+
 ukeTuning :: Int -> Double
-ukeTuning n = intervalOf (scalePFD (fromIntegral n) $ classInOctave 0 perfectFourth) lowG
+ukeTuning n = intervalOf (stimes n $ inOctave 0 perfectFourth) lowG
   where
-    lowG = intervalOf (classInOctave (-1) minorSeventh) concertA
+    lowG = intervalOf (inOctave (-1) minorSeventh) concertA
 
 ukeSoundTable :: Int -> Int -> Wavetable
 ukeSoundTable s f = discretize . tickTable stdtr . sinWave $ (ukeTuning (s - 1)) * semi ** fromIntegral f
 
+{-
 mapleLeaf :: Beat UkeTab
 mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9,m10]
   where
@@ -160,6 +171,7 @@ mapleLeaf = RoseBeat $ concat [m1,m2,m3,m4,m9,m10]
       ,(1,Beat $ UkeTab Nothing (Just 3) (Just 3) Nothing)
       ]
     m10 = ((1,Beat ukeRest) : (3,hn) : tail m9) ++ [(2,Beat ukeRest)]
+-}
 
 data UkeTab = UkeTab (Maybe Int) (Maybe Int) (Maybe Int) (Maybe Int)
 
@@ -179,11 +191,13 @@ displayUkeTab ch (UkeTab a b c d) = [k a,k b,k c,k d]
     k (Just p) = "0123456789abcdef" !! p
     k Nothing = ch
 
+{-
 writeUkeTab :: Beat UkeTab -> String
 writeUkeTab = unlines . beatList . flattenTimes (fmap toUkeHold) . fmap (displayUkeTab '-')
 
 ukeHF :: Beat UkeTab -> Beat UkeTab
 ukeHF _ = Beat ukeRest
+-}
 
 toUkeHold :: String -> String
 toUkeHold = map (\c -> if c == '-' then '-' else '|')
@@ -197,6 +211,7 @@ playUke (UkeTab a b c d) = mergeWaves . zipWith mkSnd [1,2,3,4] $ [a,b,c,d]
 ukeEnvelope :: Envelope Tick Discrete
 ukeEnvelope = discretizeEnvelope stdtr $ Envelope 0 0.01 0.05 0.01 0.5 0.01
 
+{-
 theCanon :: Beat PitchFactorDiagram
 theCanon = equalTime . fmap (repeatBeat 2 . arpegiateLike [2,0,1,2,1,0,1,0,2,0,1,2]) $ 
   [chordOver (classInOctave 1 unison) majorChord -- I
@@ -208,6 +223,7 @@ theCanon = equalTime . fmap (repeatBeat 2 . arpegiateLike [2,0,1,2,1,0,1,0,2,0,1
   ,chordOver (classInOctave 0 perfectFourth) majorChord -- IV
   ,chordOver (classInOctave 0 perfectFifth) majorChord -- V
   ]
+-}
 exampleModulator :: Waveform Tick Double
 exampleModulator = tickTable stdtr . modulate (\x -> oscAbout (1/stdtr) (x/(3*stdtr))) (sinWave 0.5) $ sinWave 0.25
 
@@ -242,6 +258,7 @@ warmupSolFeck = "0```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'```'!,,'=3"
 seekAndDestroySolFeck :: String
 seekAndDestroySolFeck = "0-0-^^787---vv0-^232---0-^8-7-a-7-^3-2-"
 
+{-
 
 blueBossaRiff :: Beat PitchFactorDiagram
 blueBossaRiff = RoseBeat
@@ -275,3 +292,4 @@ blueBossaRiff = RoseBeat
       ,(3,Beat (7 + 2))
       ,(9,Beat (7 + 1))
       ]
+-}

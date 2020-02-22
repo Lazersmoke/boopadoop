@@ -1,82 +1,83 @@
+{-# LANGUAGE TypeApplications #-}
 -- | Some common musical intervals written as @'PitchFactorDiagram'@s
 module Boopadoop.Interval where
 
 import Data.Ratio
 import Boopadoop.Diagram
 
-fromMajorScale :: Int -> PitchFactorDiagram
+fromMajorScale :: Int -> Octaved PitchFactorDiagram
 fromMajorScale = fromPitchList majorScale
 
-fromDiatonic :: Int -> PitchFactorDiagram
+fromDiatonic :: Int -> Octaved PitchFactorDiagram
 fromDiatonic = fromPitchList [unison,minorSecond,majorSecond,minorThird,majorThird,perfectFourth,tritone,perfectFifth,minorSixth,majorSixth,minorSeventh,majorSeventh]
 
-fromPitchList :: [PitchClass] -> Int -> PitchFactorDiagram
-fromPitchList ps k = classInOctave (fromIntegral o) (ps !! i)
+fromPitchList :: [a] -> Int -> Octaved a
+fromPitchList ps k = Octaved o (ps !! i)
   where
     (o,i) = k `divMod` length ps
 
-ttPFD :: TwelveTone -> PitchFactorDiagram
-ttPFD (TwelveTone k) = fromDiatonic k
+ttPFD :: Octaved TwelveTone -> Octaved PitchFactorDiagram
+ttPFD = fromDiatonic . ttDeoctave
 
-classInterval :: PitchClass -> PitchFactorDiagram -> PitchFactorDiagram
-classInterval pc pfd = addPFD pfd $ classInOctave 0 pc
+--classInterval :: PitchClass -> PitchFactorDiagram -> PitchFactorDiagram
+--classInterval pc pfd = addPFD pfd $ inOctave 0 pc
 
 -- | The non interval, ratio is 1. Identity of `addPFD`.
-unison :: PitchClass
-unison = ClassFactors []
+unison :: Monoid a => a
+unison = mempty
 
 -- | Interval of a perfect fourth 4:3
-perfectFourth :: PitchClass
+perfectFourth :: PitchFactorDiagram
 perfectFourth = complPitchClass perfectFifth
 
 -- | Interval of a perfect fifth 3:2
-perfectFifth :: PitchClass
-perfectFifth = ClassFactors [1]
+perfectFifth :: PitchFactorDiagram
+perfectFifth = Factors [1]
 
 -- | Interval of a major third 5:4
-majorThird :: PitchClass
-majorThird = ClassFactors [0,1]
+majorThird :: PitchFactorDiagram
+majorThird = Factors [0,1]
 
 -- | Interval of a minor third 6:5
-minorThird :: PitchClass
-minorThird = ClassFactors [1,-1]
+minorThird :: PitchFactorDiagram
+minorThird = Factors [1,-1]
 
 -- | Interval of a minor sixth 8:5
-minorSixth :: PitchClass
+minorSixth :: PitchFactorDiagram
 minorSixth = complPitchClass majorThird
 
 -- | Interval of a major sixth 5:3
-majorSixth :: PitchClass
+majorSixth :: PitchFactorDiagram
 majorSixth = complPitchClass minorThird
 
 -- | Interval 7:4
-harmonicSeven :: PitchClass
-harmonicSeven = ClassFactors [0,0,1]
+harmonicSeven :: PitchFactorDiagram
+harmonicSeven = Factors [0,0,1]
 
 -- | Interval of a major seventh 16:9
-minorSeventh :: PitchClass
-minorSeventh = ClassFactors [-2]
+minorSeventh :: PitchFactorDiagram
+minorSeventh = Factors [-2]
 
 -- | Interval of a major seventh 15:8
-majorSeventh :: PitchClass
-majorSeventh = ClassFactors [1,1]
+majorSeventh :: PitchFactorDiagram
+majorSeventh = Factors [1,1]
 
 -- | Interval of a minor second 16:15
-minorSecond :: PitchClass
+minorSecond :: PitchFactorDiagram
 minorSecond = complPitchClass majorSeventh
 
 -- | Interval of a major second 9:8
-majorSecond :: PitchClass
-majorSecond = ClassFactors [2]
+majorSecond :: PitchFactorDiagram
+majorSecond = Factors [2]
 
 -- | Interval 25:16
-mystery25 :: PitchClass
-mystery25 = ClassFactors [0,2]
+mystery25 :: PitchFactorDiagram
+mystery25 = Factors [0,2]
 
-tritone :: PitchClass
-tritone = getPitchClass . countPFD $ approxRational (sqrt 2) 0.001
+tritone :: PitchFactorDiagram
+tritone = countPFD $ approxRational @Double (sqrt 2) 0.001
 
-majorScale :: [PitchClass]
+majorScale :: [PitchFactorDiagram]
 majorScale = [unison,majorSecond,majorThird,perfectFourth,perfectFifth,majorSixth,majorSeventh]
 
 -- | Interval 199:200. Should be mostly consonant to your ear but has non-small PFD:
@@ -86,16 +87,16 @@ majorScale = [unison,majorSecond,majorThird,perfectFourth,perfectFifth,majorSixt
 counterExample :: PitchFactorDiagram
 counterExample = Factors $ [-3,0,-2] ++ take 42 (repeat 0) ++ [1]
 
-majorChord :: Chord
+majorChord :: Chord PitchFactorDiagram
 majorChord = chordOf [unison,majorThird,perfectFifth]
 
-minorChord :: Chord
+minorChord :: Chord PitchFactorDiagram
 minorChord = chordOf [unison,minorThird,perfectFifth]
 
-powerChord :: ChordVoicing
-powerChord = voiceChord [classInOctave 0 unison,classInOctave 0 perfectFifth,octave]
+powerChord :: ChordVoicing PitchFactorDiagram
+powerChord = chordOf [inOctave 0 unison,inOctave 0 perfectFifth,inOctave 1 unison]
 
-fphRanges :: [[PitchFactorDiagram]]
+fphRanges :: [[Octaved PitchFactorDiagram]]
 fphRanges = fmap (fmap fromDiatonic) [bass,tenor,alto,soprano]
   where
     soprano = [0..19]
@@ -105,11 +106,11 @@ fphRanges = fmap (fmap fromDiatonic) [bass,tenor,alto,soprano]
 
 data IntervalClassification = AscSkip | DecSkip | AscStep | DecStep | NoChange
 
-classifyPFD :: PitchFactorDiagram -> IntervalClassification
-classifyPFD pfd = if pfd == Factors [] then NoChange else if pfd > Factors []
-  then if pfd >= classInOctave 0 minorThird
+classifyPFD :: Octaved PitchFactorDiagram -> IntervalClassification
+classifyPFD pfd = if pfd == inOctave 0 unison then NoChange else if pfd > inOctave 0 unison
+  then if pfd >= inOctave 0 minorThird
     then AscSkip
     else AscStep
-  else if makePFDGoUp pfd >= classInOctave 0 minorThird
+  else if makePFDGoUp pfd >= inOctave 0 minorThird
     then DecSkip
     else DecStep

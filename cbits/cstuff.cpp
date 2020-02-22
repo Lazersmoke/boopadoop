@@ -121,15 +121,15 @@ HRESULT PlayAudioStream(LoadCB loadDataCallback, StartCoordCB sccb)//void* (*loa
     EXIT_ON_ERROR(hr)
 
     // Tell the audio source which format to use.
-    //std::cout << "Bits: " << pwfx->wBitsPerSample << "\n";
-    //std::cout << "Format Tag: " << pwfx->wFormatTag << "\n";
-    //std::cout << "Format Tag Options: WAVE_FORMAT_PCM " << WAVE_FORMAT_PCM << "; WAVE_FORMAT_EXTENSIBLE" << WAVE_FORMAT_EXTENSIBLE << "\n";
-    //std::cout << "Sample Rate: " << pwfx->nSamplesPerSec << "\n";
-    //std::cout << "Channel Mask: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->dwChannelMask << "\n";
-    //std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data1 << "\n";
-    //std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data2 << "\n";
-    //std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data3 << "\n";
-    //std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data4 << "\n";
+    std::cout << "Bits: " << pwfx->wBitsPerSample << "\n";
+    std::cout << "Format Tag: " << pwfx->wFormatTag << "\n";
+    std::cout << "Format Tag Options: WAVE_FORMAT_PCM " << WAVE_FORMAT_PCM << "; WAVE_FORMAT_EXTENSIBLE" << WAVE_FORMAT_EXTENSIBLE << "\n";
+    std::cout << "Sample Rate: " << pwfx->nSamplesPerSec << "\n";
+    std::cout << "Channel Mask: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->dwChannelMask << "\n";
+    std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data1 << "\n";
+    std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data2 << "\n";
+    std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data3 << "\n";
+    std::cout << "SubFormat: " << ((WAVEFORMATEXTENSIBLE*) pwfx)->SubFormat.Data4 << "\n";
     //hr = pMySource->SetFormat(pwfx);
     //EXIT_ON_ERROR(hr)
 

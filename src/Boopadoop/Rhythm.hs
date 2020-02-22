@@ -174,24 +174,24 @@ weightTimes bs = RoseBeat $ zip (fmap (`div` tot) ts) bs
     getTime (Beat _) = 1
     getTime (RoseBeat xs) = min 1 $ sum . fmap fst $ xs
 
-equalTime :: [Beat a] -> Beat a
-equalTime = RoseBeat . fmap (1,)
+equalTime :: [a] -> TimeStream a
+equalTime = foldr (TimeStream 1) EndStream
 
 -- | The standard rock beat (or half of it) played on the 'DrumRack'
-rockBeat :: Beat (Maybe DrumRack)
-rockBeat = equalTime [Beat (Just Kick), Beat Nothing, Beat (Just Snare), Beat Nothing]
+rockBeat :: TimeStream (Maybe DrumRack)
+rockBeat = equalTime [Just Kick,Nothing,Just Snare,Nothing]
 
 swingIt :: Beat Int
 swingIt = RoseBeat [(3,Beat 0),(1,Beat 1)]
 
-tremelloTwice :: a -> Beat a
-tremelloTwice a = equalTime [Beat a, Beat a]
+tremelloTwice :: a -> TimeStream a
+tremelloTwice a = equalTime [a,a]
 
 swingTremelloTwice :: a -> Beat a
 swingTremelloTwice a = RoseBeat [(3,Beat a), (1,Beat a)]
 
-repeatBeat :: Int -> Beat a -> Beat a
-repeatBeat k b = equalTime $ replicate k b
+repeatBeat :: Int -> TimeStream a -> TimeStream a
+repeatBeat k b = equalTime (replicate k ()) >> b
 
 -- | Force there to be only prime divisions of time in the rhythm.
 -- This is done without affecting the actual rhythm.

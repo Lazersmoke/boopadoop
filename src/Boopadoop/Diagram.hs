@@ -1,4 +1,8 @@
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveFunctor #-}
 -- | Tools for creating and manipulation Pitch Factor Diagrams, a tool for representing musical 
 -- intervals and examining their relations.
 module Boopadoop.Diagram where
@@ -12,21 +16,54 @@ import Data.Numbers.Primes
 import Data.Align (salign)
 import Boopadoop.Rhythm (SummaryChar(sumUp))
 
-data TwelveTone = TwelveTone Int
+newtype TwelveTone = MkTwelveTone {getTTNum :: Int} deriving (Eq,Num)
+
+instance Monoid TwelveTone where
+  mempty = twelveTone 0
+
+instance Semigroup TwelveTone where
+  (<>) = addOctave
+
+instance Monoid (Octaved TwelveTone) where
+  mempty = inOctave 0 $ twelveTone 0
+
+instance Semigroup (Octaved TwelveTone) where
+  a <> b = let (o,p) = (getTTNum (getPitchClass a) + getTTNum (getPitchClass b)) `divMod` 12 in Octaved (o + getOctave a + getOctave b) (twelveTone p)
+
+instance Ord TwelveTone where
+ compare a b = compare (getTTNum a) (getTTNum b)
+
+twelveTone :: Int -> TwelveTone
+twelveTone k = if k `elem` [0..11] then MkTwelveTone k else error $ "twelveTone " ++ show k ++ " not in range"
+
+ttDeoctave :: Octaved TwelveTone -> Int
+ttDeoctave ott = 12 * getOctave ott + getTTNum (getPitchClass ott)
+
+instance SummaryChar TwelveTone where
+  sumUp t = if getTTNum t < 0 || getTTNum t > 11 then error "SummaryChar improper TwelveTone" else "0123456789ab" !! getTTNum t
+
+instance SummaryChar (Octaved TwelveTone) where
+  sumUp (Octaved _ t) = sumUp t
 
 instance Show TwelveTone where
-  show p = ("0123456789ab" !! ttPitch p) : show (ttOctave p)
+  show = (:[]) . sumUp
 
-ttOctave :: TwelveTone -> Int
-ttOctave (TwelveTone k) = k `div` 12
+instance Show (Octaved TwelveTone) where
+  show (Octaved k t) = "Octaved " ++ show k ++ "; " ++ show t
 
-ttPitch :: TwelveTone -> Int
-ttPitch (TwelveTone k) = k `mod` 12
+ttFromSolfeck :: Char -> Maybe TwelveTone
+ttFromSolfeck = fmap twelveTone . (`elemIndex` "0123456789ab")
 
-ttScaleDown :: TwelveTone -> TwelveTone -> TwelveTone
-ttScaleDown root p = ttMap (subtract delta) p
+invTT :: TwelveTone -> TwelveTone
+invTT = twelveTone . (`mod` 12) . negate . getTTNum
+
+ttMajor :: Chord TwelveTone
+ttMajor = chordOf . fmap twelveTone $ [0,2,4,5,7,9,11]
+
+ttScaleDown :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
+ttScaleDown root p = (inOctave (-1) $ invTT delta) <> p
   where
-    delta = case ttInterval root p of
+    delta = twelveTone $ case ttDiff root (getPitchClass p) of
       0 -> 1
       1 -> 1
       2 -> 2
@@ -41,11 +78,10 @@ ttScaleDown root p = ttMap (subtract delta) p
       11 -> 2
       _ -> error "Too big of interval"
 
-
-ttScaleUp :: TwelveTone -> TwelveTone -> TwelveTone
-ttScaleUp root p = ttMap (+delta) p
+ttScaleUp :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
+ttScaleUp root p = inOctave 0 (twelveTone delta) <> p
   where
-    delta = case ttInterval root p of
+    delta = case ttDiff root (getPitchClass p) of
       0 -> 2
       1 -> 1
       2 -> 2
@@ -61,14 +97,16 @@ ttScaleUp root p = ttMap (+delta) p
       _ -> error "Too big of interval"
 
 ttMap :: (Int -> Int) -> TwelveTone -> TwelveTone
-ttMap f (TwelveTone k) = TwelveTone (f k)
+ttMap f = twelveTone . (`mod` 12) . f . getTTNum
 
-ttDiff :: TwelveTone -> TwelveTone -> TwelveTone
-ttDiff (TwelveTone a) (TwelveTone b) = TwelveTone (a - b)
+ttDiff :: TwelveTone -> TwelveTone -> Int
+ttDiff a b = (getTTNum a - getTTNum b) `mod` 12
 
-ttInterval :: TwelveTone -> TwelveTone -> Int
-ttInterval a b = ttPitch b - ttPitch a
+ttRelPitch :: TwelveTone -> Octaved TwelveTone -> Int
+ttRelPitch r p = ttDiff r (getPitchClass p)
 
+ttInterval :: Octaved TwelveTone -> Octaved TwelveTone -> Int
+ttInterval a b = 12 * (getOctave b - getOctave a) + (getTTNum . getPitchClass) b - (getTTNum . getPitchClass) a
 
 -- | 12 tone equal temperament semitone ratio. Equal to @2 ** (1/12)@.
 semi :: Floating a => a
@@ -82,37 +120,31 @@ allSemis = map (semi **) . map fromIntegral $ [0..11 :: Int]
 takeFinAlignments :: Floating a => Int -> [[a]]
 takeFinAlignments fin = map (\k -> map (*k) . map fromIntegral $ [1.. fin]) allSemis
 
-newtype PitchClass = ClassFactors {getClassFactors :: [Integer]}
+inOctave :: Int -> a -> Octaved a
+inOctave = Octaved
+--addPFD (scalePFD k octave) . normalizePFD . Factors . (0:) . getClassFactors
 
-instance Eq PitchClass where
-  (==) a b = (==) @PitchFactorDiagram (classInOctave 0 a) (classInOctave 0 b)
+data Octaved a = Octaved {getOctave :: Int, getPitchClass :: a} deriving (Functor,Eq)
 
-instance Ord PitchClass where
-  compare a b = compare @PitchFactorDiagram (classInOctave 0 a) (classInOctave 0 b)
+instance Ord a => Ord (Octaved a) where
+  compare (Octaved oa pa) (Octaved ob pb) = case compare oa ob of
+    EQ -> compare pa pb
+    x -> x
 
-instance Show PitchClass where
-  show pfd = take 5 (show (diagramToRatio @Double $ classInOctave 0 pfd) ++ repeat '0') ++ " {x," ++ (init . tail $ show (getClassFactors pfd)) ++ "}"
+addOctave :: Semigroup (Octaved a) => a -> a -> a
+addOctave a b = getPitchClass (inOctave 0 a <> inOctave 0 b)
 
-getPitchClass :: PitchFactorDiagram -> PitchClass
-getPitchClass = ClassFactors . drop 1 . getFactors
+complPitchClass :: PitchFactorDiagram -> PitchFactorDiagram
+complPitchClass = Factors . fmap negate . getFactors
 
-classInOctave :: Integer -> PitchClass -> PitchFactorDiagram
-classInOctave k = addPFD (scalePFD k octave) . normalizePFD . Factors . (0:) . getClassFactors
+octave :: Monoid a => Octaved a
+octave = inOctave 1 mempty
 
-getOctave :: PitchFactorDiagram -> Integer
-getOctave = floor . logBase 2 . diagramToRatio @Double
+shiftOctave :: Int -> Octaved a -> Octaved a
+shiftOctave dk (Octaved k a) = Octaved (k + dk) a
 
-complPitchClass :: PitchClass -> PitchClass
-complPitchClass = ClassFactors . fmap negate . getClassFactors
-
-octave :: PitchFactorDiagram
-octave = Factors [1]
-
--- | A pitch factor diagram is a list of prime exponents that represents a rational number
--- via 'diagramToRatio'. These are useful because pitches with few prime factors, that is,
--- small 'PitchFactorDiagram's with small factors in them, are generally consonant, and
--- many interesting just intonation intervals can be written this way (see 'Boopadoop.Interval.perfectFifth'
--- and 'Boopadoop.Interval.majorThird').
+-- | A pitch factor diagram is a factorized representation of a rational number in [1,2).
+-- See 'diagramToRatio'.
 newtype PitchFactorDiagram = Factors {getFactors :: [Integer]}
 
 instance Eq PitchFactorDiagram where
@@ -123,46 +155,69 @@ instance Show PitchFactorDiagram where
     where
       showSigned x = if x >= 0 then '+' : show x else show x
 
+instance Show (Octaved PitchFactorDiagram) where
+  show (Octaved k pfd) = "Octaved " ++ show k ++ "; " ++ show pfd
+
 instance Ord PitchFactorDiagram where
   compare a b = compare @Rational (diagramToRatio a) (diagramToRatio b)
 
 instance SummaryChar PitchFactorDiagram where
-  sumUp pfd = "0123456789ab" !! ((`mod` 12) . round $ diagramToSemi @Double pfd)
+  sumUp pfd = if i < 0 || i > 63 then error "Bad PFD" else "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/" !! i
+    where
+      i = round . (*64) . subtract 1 $ diagramToRatio @Double pfd
 
 -- | 'mempty' is the unison PFD, with ratio @1@.
 instance Monoid PitchFactorDiagram where
   mempty = Factors []
-  mappend = addPFD
--- | 'PitchFactorDiagram's are combined by multiplying their underlying ratios (adding factors).
+
+instance Monoid (Octaved PitchFactorDiagram) where
+  mempty = inOctave 0 $ Factors []
+
 instance Semigroup PitchFactorDiagram where
-  (<>) = addPFD
+  (<>) = addOctave
+
+-- | 'PitchFactorDiagram's are combined by multiplying their underlying ratios (adding factors).
+instance Semigroup (Octaved PitchFactorDiagram) where
+  oa <> ob = let pfd = map getSum $ salign (map Sum . getFactors . getPitchClass $ oa) (map Sum . getFactors . getPitchClass $ ob) in Octaved (getOctave oa + getOctave ob + getPFDNativeOctave (Factors pfd)) (Factors pfd)
 
 pettyDissMeasure :: PitchFactorDiagram -> Integer
 pettyDissMeasure = floor . diagramToRatio @Double . Factors . map abs . getFactors
 
--- | Convert a factor diagram to the underlying ratio by raising each prime (starting from two) to the power in the factor list. For instance, going up two perfect fifths and down three major thirds yields:
+-- | Convert a factor diagram to the underlying ratio by raising each prime (starting from three) to the power in the factor list. For instance:
 -- @
---  diagramToRatio (Factors [4,2,-3]) = (2 ^^ 4) * (3 ^^ 2) * (5 ^^ (-3)) = 144/125
+--  diagramToRatio (Factors [2,-3]) = (3 ^^ 2) * (5 ^^ (-3)) = 9/125
 -- @
+--
+-- Has codomain [1,2)
 diagramToRatio :: Fractional a => PitchFactorDiagram -> a
-diagramToRatio = product . zipWith (^^) (map fromIntegral (primes @Int)) . getFactors
+diagramToRatio pfd = (2 ^^ negate (getPFDNativeOctave pfd)) * rawPFDRatio pfd
+
+rawPFDRatio :: Fractional a => PitchFactorDiagram -> a
+rawPFDRatio = product . zipWith (^^) (map fromIntegral (drop 1 $ primes @Int)) . getFactors
+
+ratioBetween :: Fractional a => PitchFactorDiagram -> PitchFactorDiagram -> a
+ratioBetween a b = diagramToRatio a / diagramToRatio b
 
 -- | Similar to 'diagramToRatio', but simplifies the resulting ratio to the simplest ratio within @0.05@.
-diagramToFloatyRatio :: PitchFactorDiagram -> Rational
-diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio @Double
+--diagramToFloatyRatio :: PitchFactorDiagram -> Rational
+--diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio @Double
 
 -- | Convert a PFD to its decimal number of semitones. Useful for approximating weird ratios in a twelvetone scale:
 -- @
 --  diagramToSemi (normalizePFD $ Factors [0,0,0,1]) = diagramToSemi (countPFD (7/4)) = 9.688259064691248
 -- @
-diagramToSemi :: Floating a => PitchFactorDiagram -> a
-diagramToSemi = (12 *) . logBase 2 . diagramToRatio
+--diagramToSemi :: Floating a => PitchFactorDiagram -> a
+--diagramToSemi = (12 *) . logBase 2 . diagramToRatio
 
 -- | Normalize a PFD by raising or lowering it by octaves until its ratio lies between @1@ (unison) and @2@ (one octave up).
 -- This operation is idempotent.
-normalizePFD :: PitchFactorDiagram -> PitchFactorDiagram
-normalizePFD (Factors []) = Factors []
-normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . diagramToRatio @Double . Factors . (0:) $ xs) : xs
+--normalizePFD :: PitchFactorDiagram -> PitchFactorDiagram
+--normalizePFD (Factors []) = Factors []
+--normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . diagramToRatio @Double . Factors . (0:) $ xs) : xs
+
+-- | Gets the octave that the pitch factor diagram would be in if we didn't normalize it back to [1,2)
+getPFDNativeOctave :: PitchFactorDiagram -> Int
+getPFDNativeOctave = floor . logBase 2 . rawPFDRatio @Double
 
 -- | Same as 'countPFD' but makes an effort to simplify the ratio from a 'Double' slightly to the simplest rational number within @0.0001@.
 countPFDFuzzy :: Double -> PitchFactorDiagram
@@ -179,80 +234,65 @@ countPFD k = Factors $ go (primeFactors $ numerator k,primeFactors $ denominator
     go _ [] = error "The primes ended"
 
 -- | Converts a PFD into an operation on frequencies. @'intervalOf' 'Boopadoop.Interval.perfectFifth' 'Boopadoop.concertA'@ is the just intonation E5.
-intervalOf :: PitchFactorDiagram -> (Double -> Double)
-intervalOf = (*) . (diagramToRatio)
+intervalOf :: Octaved PitchFactorDiagram -> (Double -> Double)
+intervalOf pfd = (*) (2 ^^ (getOctave pfd - getPFDNativeOctave (getPitchClass pfd)) * diagramToRatio (getPitchClass pfd))
 
--- | Scale a PFD by raising the underlying ratio to the given power. @'scalePFD' 2 'Boopadoop.Interval.perfectFifth' = 'addPFD' 'Boopadoop.Interval.octave' 'Boopadoop.Interval.majorSecond'@
+-- | Scale a PFD by raising the underlying ratio to the given power.
 scalePFD :: Integer -> PitchFactorDiagram -> PitchFactorDiagram
 scalePFD lambda = Factors . map (*lambda) . getFactors
 
--- | Inverts a PFD. @'invertPFD' = 'scalePFD' (-1)@
+-- | Inverts a PFD. @'invertPFD' = 'scalePFD' (-1)@. For instance, a perfect fifth will invert into a perfect fourth
 invertPFD :: PitchFactorDiagram -> PitchFactorDiagram
 invertPFD = scalePFD (-1)
 
--- | Adds two PFDs together by multiplying their ratios. @'addPFD' minorThird 'Boopadoop.Interval.majorThird' = 'Boopadoop.Interval.perfectFifth'@
+-- | Adds two PFDs together by multiplying their ratios. @'addPFD' minorThird majorThird = 'Boopadoop.Interval.perfectFifth'@
+-- Addition is performed modulo octaves
 addPFD :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
 addPFD a b = Factors . map getSum $ salign (map Sum $ getFactors a) (map Sum $ getFactors b)
 
-makePFDGoUp :: PitchFactorDiagram -> PitchFactorDiagram
-makePFDGoUp pfd = if pfd > Factors [] then pfd else invertPFD pfd
+makePFDGoUp :: Octaved PitchFactorDiagram -> Octaved PitchFactorDiagram
+makePFDGoUp (Octaved k pfd) = if k >= 0 then Octaved k pfd else Octaved (negate k) (invertPFD pfd)
 
 -- | Prints the natural numbers from the given value up to @128@, highlighting primes and powers of two.
 -- Interesting musical intervals are build out of the relative distance of a prime between the two
 -- nearest powers of two.
+{-
 printTheSequence :: Int -> IO ()
 printTheSequence k 
   | k > 128 = putStrLn ""
   | k .&. (k-1) == 0 = putStr ("|\n[" ++ show k ++ "]") >> printTheSequence (k+1)
   | isPrime k = putStr ("(" ++ show k ++ ")") >> printTheSequence (k+1)
   | otherwise = putStr " . " >> printTheSequence (k+1)
+-}
 
-newtype ChordVoicing = ChordVoicing {getVoices :: Set.Set PitchFactorDiagram}
+type ChordVoicing a = Chord (Octaved a)
 
-newtype Chord = Chord {getNotes :: Set.Set PitchClass}
+newtype Chord a = Chord {getVoices :: Set.Set a}
 
-instance SummaryChar ChordVoicing where
+chordMap :: (Ord a,Ord b) => (a -> b) -> Chord a -> Chord b
+chordMap f = Chord . Set.map f . getVoices
+
+instance SummaryChar (Chord a) where
   sumUp = head . show . countVoices
 
-chordSize :: Chord -> Int
-chordSize = Set.size . getNotes
-
-countVoices :: ChordVoicing -> Int
+countVoices :: Chord a -> Int
 countVoices = Set.size . getVoices
 
-chordOf :: [PitchClass] -> Chord
+chordOf :: Ord a => [a] -> Chord a
 chordOf = Chord . Set.fromList
 
-voiceChord :: [PitchFactorDiagram] -> ChordVoicing
-voiceChord = ChordVoicing . Set.fromList
+rebaseChord :: (Ord a,Semigroup a) => a -> Chord a -> Chord a
+rebaseChord p = chordMap (<> p)
 
-rebaseChord :: PitchFactorDiagram -> ChordVoicing -> ChordVoicing
-rebaseChord p = onVoices (addPFD p)
+getVoiceList :: Chord a -> [a]
+getVoiceList = Set.toList . getVoices
 
-chordOver :: PitchFactorDiagram -> Chord -> ChordVoicing
-chordOver pfd = ChordVoicing . Set.map (addPFD pfd . classInOctave 0) . getNotes
+addToChord :: Ord a => a -> Chord a -> Chord a
+addToChord p (Chord c) = Chord (Set.insert p c)
 
-chordPitches :: Chord -> [PitchClass]
-chordPitches = Set.toList . getNotes
-
-listVoices :: ChordVoicing -> [PitchFactorDiagram]
-listVoices = Set.toList . getVoices
-
-onVoices :: (PitchFactorDiagram -> PitchFactorDiagram) -> ChordVoicing -> ChordVoicing
-onVoices f (ChordVoicing c) = ChordVoicing $ Set.map f c
-
-onPitches :: (PitchClass -> PitchClass) -> Chord -> Chord
-onPitches f (Chord c) = Chord $ Set.map f c
-
-addPitch :: PitchClass -> Chord -> Chord
-addPitch p (Chord c) = Chord (Set.insert p c)
-
-invChrd :: Int -> ChordVoicing -> ChordVoicing
+invChrd :: (Monoid a,Ord a) => Int -> ChordVoicing a -> ChordVoicing a
 invChrd 0 c = c
-invChrd k (ChordVoicing c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (ChordVoicing $ Set.insert (addPFD (Factors [1]) p) c')
-
-addPC :: PitchClass -> PitchClass -> PitchClass
-addPC a b = ClassFactors . map getSum $ salign (map Sum $ getClassFactors a) (map Sum $ getClassFactors b)
+invChrd k (Chord c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (Chord $ Set.insert (shiftOctave 1 p) c')
 
 {-
 voiceChord :: [Int] -> Chord -> Chord
@@ -263,8 +303,8 @@ voiceChord voicing c = if maximum voicing < chordSize c
     z s p = if (\m -> case m of {Just _ -> True; Nothing -> False}) (Set.lookupGE p s) then z s (addPFD (Factors [1]) p) else Set.insert p s
 -}
 
-chordRoot :: Chord -> PitchClass
-chordRoot = Set.findMin . getNotes
+chordRoot :: Ord a => Chord a -> a
+chordRoot = Set.findMin . getVoices
 {-
 closedFPH :: Int -> Chord -> Chord
 closedFPH = closedFPHOver 0
@@ -274,10 +314,10 @@ closedFPHOver bass ov c = if chordSize c >= 3
   then voiceChord [bass,ov,(ov + 1) `mod` 3, (ov + 2) `mod` 3] c
   else error $ "closedFPHOver chord of size " ++ show (chordSize c)
 -}
-instance Show Chord where
-  show c = "<" ++ (init . tail . show . chordPitches $ c) ++ ">"
+instance Show a => Show (Chord a) where
+  show c = "<" ++ (init . tail . show . getVoiceList $ c) ++ ">"
 
-prettyShowChord :: Chord -> String
+prettyShowChord :: Show a => Chord a -> String
 prettyShowChord (Chord c) = init . unlines $ ["/="] ++ fmap show (Set.toList c) ++ ["\\="]
 
 consonantHalfway :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
@@ -287,16 +327,16 @@ consonantHalfway x y = countPFDFuzzy $ num/denom
     --denom = sum $ zipWith (\a b -> fromIntegral a * log (fromIntegral b)) (zipWith (-) (getFactors y) (getFactors x ++ repeat 0)) primes
     denom = log $ diagramToRatio $ addPFD y (invertPFD x)
 
-chordCeil :: PitchFactorDiagram -> Chord -> PitchFactorDiagram
-chordCeil p c = let (_l,g) = Set.split pc (getNotes c) in case Set.lookupMin g of
-  Just g' -> classInOctave (getOctave p) g'
-  Nothing -> classInOctave (getOctave p + 1) $ Set.findMin (getNotes c)
+chordCeil :: Ord a => Octaved a -> Chord a -> Octaved a
+chordCeil p c = let (_l,g) = Set.split pc (getVoices c) in case Set.lookupMin g of
+  Just g' -> inOctave (getOctave p) g'
+  Nothing -> inOctave (getOctave p + 1) $ Set.findMin (getVoices c)
   where
     pc = getPitchClass p
 
-chordFloor :: PitchFactorDiagram -> Chord -> PitchFactorDiagram
-chordFloor p c = let (l,_g) = Set.split pc (getNotes c) in case Set.lookupMax l of
-  Just l' -> classInOctave (getOctave p) l'
-  Nothing -> classInOctave (getOctave p - 1) $ Set.findMax (getNotes c)
+chordFloor :: Ord a => Octaved a -> Chord a -> Octaved a
+chordFloor p c = let (l,_g) = Set.split pc (getVoices c) in case Set.lookupMax l of
+  Just l' -> inOctave (getOctave p) l'
+  Nothing -> inOctave (getOctave p - 1) $ Set.findMax (getVoices c)
   where
     pc = getPitchClass p

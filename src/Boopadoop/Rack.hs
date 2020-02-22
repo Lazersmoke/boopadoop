@@ -35,9 +35,9 @@ data RackStruct (a :: k) where
 
 foreign import ccall "sin" c_sin :: CDouble -> CDouble
 foreign import ccall "windows.h LoadLibraryW" c_windowsLoadLibrary :: CWString -> IO (Ptr ())
-foreign import ccall "hs_GetDataPointer" c_GetDataPointer :: Ptr (RackStruct "Plugin") -> IO CLLong
-foreign import ccall unsafe "hs_LoadRackPlugin" c_LoadRackPlugin :: CWString -> IO (Ptr (RackStruct "Plugin"))
-foreign import ccall unsafe "hs_GetInitCallback" c_GetInitCallback :: Ptr (RackStruct "Plugin") -> IO (FunPtr (Ptr (RackStruct "Plugin") -> IO ()))
+--foreign import ccall "hs_GetDataPointer" c_GetDataPointer :: Ptr (RackStruct "Plugin") -> IO CLLong
+--foreign import ccall unsafe "hs_LoadRackPlugin" c_LoadRackPlugin :: CWString -> IO (Ptr (RackStruct "Plugin"))
+--foreign import ccall unsafe "hs_GetInitCallback" c_GetInitCallback :: Ptr (RackStruct "Plugin") -> IO (FunPtr (Ptr (RackStruct "Plugin") -> IO ()))
 --foreign import ccall unsafe "hs_GetModelBySlug" c_GetModelBySlug :: Ptr (RackStruct "Plugin") -> IO (Ptr (RackStruct "Model"))
 --foreign import ccall "windows.h SetDefaultDllDirectories" c_windowsSetDefaultDllDirectories :: CUInt -> IO CBool
 --foreign import ccall "windows.h AddDllDirectory" c_windowsAddDLLDirectory :: CWString -> IO CBool
@@ -47,7 +47,7 @@ foreign import ccall "windows.h SetErrorMode" c_windowsSetErrorMode :: CUInt -> 
 foreign import ccall "windows.h strlen" c_strlen :: CString -> IO CInt
 foreign import ccall unsafe "dynamic" callInitCallback :: FunPtr (Ptr (RackStruct "Plugin") -> IO ()) -> Ptr (RackStruct "Plugin") -> IO ()
 
-windowsLoadLibrary :: String -> IO ()
+{-windowsLoadLibrary :: String -> IO ()
 windowsLoadLibrary s = do
   plugin <- withCWString s c_LoadRackPlugin
   putStrLn $ "Got plugin hask: " ++ show plugin
@@ -64,6 +64,7 @@ windowsLoadLibrary s = do
   where
     hexify x = [hex !! (fromIntegral x `div` 16), hex !! (fromIntegral x `mod` 16),' ']
     hex = "0123456789abcdef"
+-}
 {-
   memForPlugin <- mallocBytes 2048
   mkFun fp memForPlugin

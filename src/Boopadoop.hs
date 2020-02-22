@@ -631,8 +631,8 @@ genSaxProfile f0 = f1 ++ f2
 fakedSaxTimbre :: Double -> Wavetable
 fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile'
 
-chordSinTimbre :: ChordVoicing -> Double -> Wavetable
-chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ listVoices c
+chordSinTimbre :: ChordVoicing PitchFactorDiagram -> Double -> Wavetable
+chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ getVoiceList c
 
 {-
 sampledConvolve modf profile w = sampleFrom $ \p -> modf (sample (sample profile p) p) (sample w p)

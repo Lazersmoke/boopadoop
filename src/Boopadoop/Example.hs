@@ -247,7 +247,7 @@ vcvSound = discretize $ lowPassFilter stdtr (fmap (\x -> (x ** 2) * 10) $ repeat
     freqParam = 1
 
 blueBossaSolFeck :: String
-blueBossaSolFeck = "4-^4--...-.------.-.---^4--.=8x--...-.------.-.---^2--.=8~a2--...-.------.-x-.i-!`-=8~05-.`--.-.`---..=8"
+blueBossaSolFeck = "4-^4--...-.------.-.---^4--.=8x--...-.------.-.---^2--.=8~a0--...-.------.-x-.i-!`-=8~05-.`--.-.`---..=8"
 
 blackWidowSolFeck :: String
 blackWidowSolFeck = "5--7--8-7-5-7--8--7--5--8--a--b-a-8-5--7--8-7-5-8--a--b-a-8-a--0--1-0-a-8--a--b-a-8-a--0--1-0-a-8--a--b-a-8-a--b--a--8--b--1--2-1-b-8--a--b-a-8-b--1--2-1-b-1--3--4-3-1-7=6=6"

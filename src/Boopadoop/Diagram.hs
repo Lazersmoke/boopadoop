@@ -63,7 +63,7 @@ ttMajor = chordOf . fmap twelveTone $ [0,2,4,5,7,9,11]
 ttScaleDown :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
 ttScaleDown root p = (inOctave (-1) $ invTT delta) <> p
   where
-    delta = twelveTone $ case ttDiff root (getPitchClass p) of
+    delta = twelveTone $ case ttDiff (getPitchClass p) root of
       0 -> 1
       1 -> 1
       2 -> 2
@@ -81,7 +81,7 @@ ttScaleDown root p = (inOctave (-1) $ invTT delta) <> p
 ttScaleUp :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
 ttScaleUp root p = inOctave 0 (twelveTone delta) <> p
   where
-    delta = case ttDiff root (getPitchClass p) of
+    delta = case ttDiff (getPitchClass p) root of
       0 -> 2
       1 -> 1
       2 -> 2
@@ -235,7 +235,7 @@ countPFD k = Factors $ go (primeFactors $ numerator k,primeFactors $ denominator
 
 -- | Converts a PFD into an operation on frequencies. @'intervalOf' 'Boopadoop.Interval.perfectFifth' 'Boopadoop.concertA'@ is the just intonation E5.
 intervalOf :: Octaved PitchFactorDiagram -> (Double -> Double)
-intervalOf pfd = (*) (2 ^^ (getOctave pfd - getPFDNativeOctave (getPitchClass pfd)) * diagramToRatio (getPitchClass pfd))
+intervalOf pfd = (*) (2 ^^ getOctave pfd * diagramToRatio (getPitchClass pfd))
 
 -- | Scale a PFD by raising the underlying ratio to the given power.
 scalePFD :: Integer -> PitchFactorDiagram -> PitchFactorDiagram

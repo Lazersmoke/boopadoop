@@ -238,6 +238,9 @@ walkMajorDown p0 ts = withTimings ts . fmap fromMajorScale $ [p0, p0 - 1 ..]
 withTimings :: [Int] -> [a] -> Timed a
 withTimings ts = Timed . zip ts
 
+solFeckChrd :: String -> Chord TwelveTone
+solFeckChrd = chordOf . catMaybes . fmap ttFromSolfeck
+
 solFeckPFD :: String -> TimeStream (Maybe (Octaved PitchFactorDiagram))
 solFeckPFD = fmap (fmap ttPFD) . solFeck
 
@@ -278,8 +281,8 @@ diaIndex :: Char -> Maybe Int
 diaIndex = (`elemIndex` "0123456789ab")
 
 closestInstanceOfPitch :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
-closestInstanceOfPitch p' cur = let delta = ttRelPitch p' cur in if delta <= 6
-  then inOctave (-1) (invTT $ twelveTone delta) <> cur -- Go down; e.g. 4 from 7 to 4 with delta = 3
+closestInstanceOfPitch p' cur = let delta = ttRelPitch p' cur in if delta >= 6
+  then inOctave (-1) (twelveTone delta) <> cur -- Go down; e.g. 4 from 7 to 4 with delta = 3
   else inOctave 0 (twelveTone delta) <> cur -- Go up; e.g. 5 from 2 to 5 with delta = 9
 
 getRealDelta :: Char -> Int -> Maybe Int
@@ -377,8 +380,8 @@ ttPC rg = PlayingContext
   ,tensionPhase = Nothing
   ,pitchTarget = Nothing
   ,playingHistory = TimeStream 1 mempty EndStream
-  ,rangeLowerBound = Just . inOctave 1 $ mempty
-  ,rangeUpperBound = Just . inOctave 0 $ mempty
+  ,rangeLowerBound = Just . inOctave (-1) $ mempty
+  ,rangeUpperBound = Just . inOctave 2 $ mempty
   ,randomGen = rg
   }
 
@@ -407,10 +410,29 @@ ruledPlaying trules rules ctx = (WithExplanation whatHappened nextPFD,WithExplan
     (WithExplanation whatHappened nextPFD) = if null possibleNextPFDs then error "Writer's block! (Pitches)" else possibleNextPFDs !! nextPFDIndex
     (nextPFDIndex,randomGen') = randomR (0,length possibleNextPFDs - 1) (randomGen ctx)
 
+selectRule :: PlayingContext a -> [CompositionRule a b] -> (WithExplanation b,StdGen)
+selectRule ctx rules = let {goodRules = catMaybes $ (\r -> triggerApply r ctx) <$> rules; (i,r') = randomR (0,length goodRules - 1) (randomGen ctx)} in (goodRules !! i,r')
+
+ruledSeededPlaying :: Show (Octaved a) => TimeStream () -> [CompositionRule a (TimeStream ())] -> [CompositionRule a (Octaved a)] -> PlayingContext a -> TimeStream (WithExplanation (PlayingContext a,Octaved a))
+ruledSeededPlaying rhythmSeed rhythmRules pitchRules pc0 = let (WithExplanation _whyLastPitch (pc',_pitchLast),ts) = branchAfterEndStream (addPhrasingExpl $ go pc0 {randomGen = r'} phrase) (ruledSeededPlaying EndStream rhythmRules pitchRules pc') in ts
+  where
+    go !pc (TimeStream t () xs) = let (WithExplanation whyPitch p,r'') = selectRule pc pitchRules in let pcAfter = pc {playingHistory = TimeStream t p $ playingHistory pc, randomGen = r''} in TimeStream t (WithExplanation ("Pitch " ++ show p ++ " because " ++ whyPitch) (pcAfter,p)) (go pcAfter xs)
+    go !pc EndStream = EndStream
+    addPhrasingExpl = fmap (\(WithExplanation exp x) -> WithExplanation (exp ++ "\n  with phrasing: " ++ whyPhrase ++ "\n") x)
+    (WithExplanation whyPhrase phrase,r') = case rhythmSeed of
+      EndStream -> selectRule pc0 rhythmRules
+      ts -> (WithExplanation "Seeded" ts,randomGen pc0)
+
+stepChangeContext :: PlayingContext a -> TimeStream (PlayingContext a -> PlayingContext a) -> (PlayingContext a -> TimeStream (WithExplanation (PlayingContext a,b))) -> TimeStream (WithExplanation (PlayingContext a,b))
+stepChangeContext !pc0 (TimeStream t change changes) f = let (WithExplanation _whyLastPitch (pc',_pitchLast), ts) = branchAfterTimeStream t (f (change pc0)) (stepChangeContext pc' changes f) in ts
+
 newtype CompositionRule b a = CompositionRule {triggerApply :: PlayingContext b -> Maybe (WithExplanation a)}
 
 --ttRuleToPFDRule :: CompositionRule TwelveTone -> CompositionRule PitchFactorDiagram
 --ttRuleToPFDRule =
+
+playRoot :: CompositionRule TwelveTone (Octaved TwelveTone)
+playRoot = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> Just (WithExplanation "Play Root" $ closestInstanceOfPitch r l)
 
 skipStep :: CompositionRule TwelveTone (Octaved TwelveTone)
 skipStep = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> lastInterval (playingHistory ctx) >>= \(x'',x') -> let del = ttInterval x'' x' in if del > 2
@@ -440,22 +462,22 @@ keepRangeBounds = CompositionRule $ \ctx -> do
   ub <- rangeUpperBound ctx
   l <- lastNoteCtx ctx
   if l > ub
-    then ((WithExplanation "Soft walk toward upper bound") . chordFloor l <$> effectiveChord ctx) <|> Just (WithExplanation "Hard clamp to upper bound" ub)
+    then ((WithExplanation "Soft walk toward upper bound") . chordFloor l <$> effectiveKey ctx) <|> Just (WithExplanation "Hard clamp to upper bound" ub)
     else if l < lb
-      then ((WithExplanation "Soft walk toward lower bound") . chordCeil l <$> effectiveChord ctx) <|> Just (WithExplanation "Hard clamp to lower bound" lb)
+      then ((WithExplanation "Soft walk toward lower bound") . chordCeil l <$> effectiveKey ctx) <|> Just (WithExplanation "Hard clamp to lower bound" lb)
       else Nothing
 
 stepToCenter :: (Ord a,Monoid (Octaved a),Show (Octaved a)) => CompositionRule a (Octaved a)
-stepToCenter = CompositionRule $ \ctx -> lastNoteCtx ctx >>= \l -> effectiveChord ctx >>= \ec -> if l == mempty then Nothing else pure $ if l > mempty
+stepToCenter = CompositionRule $ \ctx -> lastNoteCtx ctx >>= \l -> effectiveKey ctx >>= \ec -> if l == mempty then Nothing else pure $ if l > mempty
   then WithExplanation "Step down towards center" (chordFloor l ec)
   else WithExplanation "Step up towards center" (chordCeil l ec)
 
 continueStepping :: CompositionRule TwelveTone (Octaved TwelveTone)
-continueStepping = CompositionRule $ \ctx -> effectiveRoot ctx >>= \r -> lastNoteCtx ctx >>= \l -> lastInterval (playingHistory ctx) >>= \(x'',x') -> case ttInterval x'' x' of
-  1 -> pure $ WithExplanation "Continue stepping upward" (ttScaleUp r l)
-  2 -> pure $ WithExplanation "Continue stepping upward" (ttScaleUp r l)
-  -1 -> pure $ WithExplanation "Continue stepping downward" (ttScaleDown r l)
-  -2 -> pure $ WithExplanation "Continue stepping downward" (ttScaleDown r l)
+continueStepping = CompositionRule $ \ctx -> effectiveKey ctx >>= \k -> lastNoteCtx ctx >>= \l -> lastInterval (playingHistory ctx) >>= \(x'',x') -> case ttInterval x'' x' of
+  1 -> pure $ WithExplanation "Continue stepping upward" (chordCeil l k)
+  2 -> pure $ WithExplanation "Continue stepping upward" (chordCeil l k)
+  -1 -> pure $ WithExplanation "Continue stepping downward" (chordFloor l k)
+  -2 -> pure $ WithExplanation "Continue stepping downward" (chordFloor l k)
   _ -> Nothing
 
 diatonicResolutionDownToRoot :: CompositionRule TwelveTone (Octaved TwelveTone)
@@ -512,6 +534,20 @@ allTimingRules =
   ,boundSpeedBelow 2
   ]
 
+wholeNote :: CompositionRule a (TimeStream ())
+wholeNote = CompositionRule $ \ctx -> Just (WithExplanation "Whole note" (TimeStream 1 () EndStream))
+
+halfNote :: CompositionRule a (TimeStream ())
+halfNote = CompositionRule $ \ctx -> Just (WithExplanation "Half note" (TimeStream 0.5 () EndStream))
+
+quarterNotes :: CompositionRule a (TimeStream ())
+quarterNotes = CompositionRule $ \ctx -> Just (WithExplanation "Quarter note" (TimeStream 0.25 () EndStream))
+
+eightNotes :: CompositionRule a (TimeStream ())
+eightNotes = CompositionRule $ \ctx -> Just (WithExplanation "Eights note" (TimeStream 0.125 () (TimeStream 0.125 () EndStream)))
+
+sixteenths :: CompositionRule a (TimeStream ())
+sixteenths = CompositionRule $ \ctx -> Just (WithExplanation "Sixteenths note" (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () EndStream)))))
 
 lastInterval :: TimeStream a -> Maybe (a,a)
 lastInterval (TimeStream _ x (TimeStream _ y _)) = Just (y,x)

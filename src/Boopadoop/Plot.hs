@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 module Boopadoop.Plot where
 
@@ -36,7 +37,7 @@ wavestreamAudioCallback killSwitch ws size ptr _flagsPtr = do
       --_ <- forkIO $ let x = forceStreamEval (fromIntegral size) rest `seq` () in x `seq` pure x
       let (fp,_,l) = BSI.toForeignPtr . BSL.toStrict . BSB.toLazyByteString . foldl mappend mempty . concatMap packFloat $ out
       --putStrLn "About to memcpy!"
-      _ <- withForeignPtr fp $ \xx -> BSI.memcpy (castPtr ptr) (castPtr xx) l *> pure 0
+      _ <- withForeignPtr fp $ \xx -> BSI.memcpy (castPtr ptr) (castPtr xx) l *> pure (0 :: Int)
       --putStrLn "About to cast!"
       pure . castFunPtrToPtr =<< mkAudioSourceCallback (wavestreamAudioCallback killSwitch rest)
   where
@@ -67,9 +68,10 @@ playWavestream startCoord ks ws = do
   c_PlayAudioStream cb sccb *> freeHaskellFunPtr cb *> freeHaskellFunPtr sccb
 
 explainNotes :: TimeStream String -> IO ()
+explainNotes EndStream = pure ()
 explainNotes (TimeStream t x xs) = do
   _ <- forkIO $ putStrLn x
-  threadDelay (floor $ t * 0.8 * 1000000)
+  threadDelay (floor $ t * 1000000)
   explainNotes xs
 
 chunkSamples :: [Discrete] -> Int -> [BSS.ByteString]
@@ -160,3 +162,32 @@ dumpFiniteWavestreamToScatter = writeFile "scatter" . unlines . outS (0 :: Int)
     outS !t (x:xs) = entryFor t x : outS (t + 1) xs
     outS _ [] = []
     entryFor t x = show t ++ " " ++ show x
+
+solFeckToLilyPond :: Octaved TwelveTone -> String -> IO ()
+solFeckToLilyPond cRel = writeFile "lilyout.ly" . (\s -> "{ " ++ s ++ " }") . toLilyPond . (fmap . fmap) (<> cRel) . stretchTimeStream (1/8) . solFeck
+
+toLilyPond :: TimeStream (Maybe (Octaved TwelveTone)) -> String
+toLilyPond (TimeStream t mx xs) = case mx of
+  Just x -> let
+      theOctave = replicate (max 0 $ 1 + getOctave x) '\''
+      decodeTT = case getPitchClass x of
+        MkTwelveTone 0 -> "c"
+        MkTwelveTone 1 -> "cis"
+        MkTwelveTone 2 -> "d"
+        MkTwelveTone 3 -> "dis"
+        MkTwelveTone 4 -> "e"
+        MkTwelveTone 5 -> "f"
+        MkTwelveTone 6 -> "fis"
+        MkTwelveTone 7 -> "g"
+        MkTwelveTone 8 -> "gis"
+        MkTwelveTone 9 -> "a"
+        MkTwelveTone 10 -> "ais"
+        MkTwelveTone 11 -> "b"
+        _ -> error "Bad Twelve Tone in lilypond"
+    in decodeTT ++ theOctave ++ theTime ++ (if doDot then "." else "") ++ " " ++ toLilyPond xs
+  Nothing -> "r" ++ theTime ++ " " ++ toLilyPond xs
+  where
+   theTime = show @Int . floor @Double . (2^^) . (if doDot then (+1) else id) . round $ logTime
+   doDot = odd @Int . round $ 2 * logTime
+   logTime = logBase (2 :: Double) . realToFrac $ recip t
+toLilyPond EndStream = ""

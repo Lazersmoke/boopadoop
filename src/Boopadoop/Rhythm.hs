@@ -19,9 +19,9 @@ newtype Timed a = Timed [(Int,a)] deriving Functor
 
 data TimeStream a = TimeStream Rational a (TimeStream a) | EndStream
 
-instance SummaryChar a => Show (TimeStream a) where
-  show (TimeStream t x xs@(TimeStream _ _ _)) = "<" ++ [sumUp x] ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :> " ++ show xs
-  show (TimeStream t x EndStream) = "<" ++ [sumUp x] ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :|"
+instance Show a => Show (TimeStream a) where
+  show (TimeStream t x xs@(TimeStream _ _ _)) = "<" ++ show x ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :> " ++ show xs
+  show (TimeStream t x EndStream) = "<" ++ show x ++ "|" ++ take 4 (show (fromRational t :: Double) ++ repeat '0') ++ "> :|"
   show EndStream = "EndStream"
 
 instance Functor TimeStream where
@@ -70,6 +70,11 @@ branchAfterTimeStream !tmax (TimeStream t x xs) branch = if t < tmax
   else (x,TimeStream tmax x branch)
 branchAfterTimeStream _ EndStream branch = (error "branchAfterTimeStream: forced last element of empty stream",branch)
 
+branchAfterEndStream :: TimeStream a -> TimeStream a -> (a,TimeStream a)
+branchAfterEndStream (TimeStream t x EndStream) branch = (x,TimeStream t x branch)
+branchAfterEndStream (TimeStream t x xs) branch = let (l,ts) = branchAfterEndStream xs branch in (l,TimeStream t x ts)
+branchAfterEndStream EndStream branch = (error "branchAfterEndStream: forced last element of empty stream",branch)
+
 forceLastAppendTimeStream :: TimeStream a -> a
 forceLastAppendTimeStream (TimeStream _ x EndStream) = x
 forceLastAppendTimeStream (TimeStream _ _ xs) = forceLastAppendTimeStream xs
@@ -81,6 +86,10 @@ overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs
 overTimingsTimeStream :: (Rational -> a -> b) -> TimeStream a -> TimeStream b
 overTimingsTimeStream f (TimeStream t x xs) = TimeStream t (f t x) $ overTimingsTimeStream f xs
 overTimingsTimeStream _ EndStream = EndStream
+
+stretchTimeStream :: Rational -> TimeStream a -> TimeStream a
+stretchTimeStream factor (TimeStream t x xs) = TimeStream (t * factor) x (stretchTimeStream factor xs)
+stretchTimeStream _ EndStream = EndStream
 
 instance SummaryChar a => Show (Timed a) where
   show (Timed bs) = "[" ++ (bs >>= \(k,b) -> sumUp b : replicate (k-1) '-') ++ "]"

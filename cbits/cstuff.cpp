@@ -65,6 +65,11 @@ int sinWaveLDC(UINT32 samplesToBuffer,BYTE* ptr, DWORD* flags){
   return (loads > 10);
 }
 
+extern "C" void hask_sleep(DWORD sleepTime);
+void hask_sleep(DWORD sleepTime){
+    Sleep(sleepTime);
+}
+
 typedef void* (*LoadCB)(UINT32,BYTE*,DWORD*);
 typedef void* (*StartCoordCB)(UINT64);
 
@@ -148,7 +153,7 @@ HRESULT PlayAudioStream(LoadCB loadDataCallback, StartCoordCB sccb)//void* (*loa
     EXIT_ON_ERROR(hr)
 
     pAudioClock->GetFrequency(&devFreq);
-    //std::cout << "GetFrequency: " << devFreq << "\n";
+    std::cout << "GetFrequency: " << devFreq << "\n";
 
     // Grab the entire buffer for the initial fill operation.
     hr = pRenderClient->GetBuffer(bufferFrameCount, &pData);
@@ -184,10 +189,7 @@ HRESULT PlayAudioStream(LoadCB loadDataCallback, StartCoordCB sccb)//void* (*loa
         // Sleep for half the buffer duration.
         Sleep((DWORD)(hnsActualDuration/REFTIMES_PER_MILLISEC/2));
         pAudioClock->GetPosition(&checkPos,NULL);
-        if(!(sccb == NULL)){
-          (*sccb)(checkPos);
-          sccb = NULL;
-        }
+        
         //std::cout << "Position After: " << checkPos << "\n";
         //std::cout << "Position Delta: " << (checkPos - before) << "\n\n";
 
@@ -209,7 +211,10 @@ HRESULT PlayAudioStream(LoadCB loadDataCallback, StartCoordCB sccb)//void* (*loa
         //std::cout << "Phase is: " << phase;
         //std::cout << "First data point is: " << (float)(((float*)pData)[0]) << "\n";
         //std::cout << "Last data point is: " << (float)(((float*)pData)[numFramesAvailable - 1]) << "\n";
-
+        if(!(sccb == NULL)){
+          (*sccb)(checkPos);
+          sccb = NULL;
+        }
         //std::cout << "Releasing buffer...";
         hr = pRenderClient->ReleaseBuffer(numFramesAvailable, flags);
         EXIT_ON_ERROR(hr)

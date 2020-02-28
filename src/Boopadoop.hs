@@ -249,6 +249,7 @@ waveformToWAVE outTicks sampleRate w = WAVE.WAVE
   ,WAVE.waveSamples = [map (unDiscrete . sample w) [0 .. outTicks - 1]]
   }
 
+-- | Take a specified number of samples at the given sample rate from the stream and put them in a @'WAVE.WAVE'@.
 wavestreamToWAVE :: Tick -> Int -> [Discrete] -> WAVE.WAVE
 wavestreamToWAVE outTicks sampleRate ws = WAVE.WAVE
   {WAVE.waveHeader = WAVE.WAVEHeader
@@ -260,17 +261,6 @@ wavestreamToWAVE outTicks sampleRate ws = WAVE.WAVE
   ,WAVE.waveSamples = [take outTicks $ map unDiscrete ws]
   }
 
-finiteWavestreamToWAVE :: Int -> [Discrete] -> WAVE.WAVE
-finiteWavestreamToWAVE sampleRate ws = WAVE.WAVE
-  {WAVE.waveHeader = WAVE.WAVEHeader
-    {WAVE.waveNumChannels = 1
-    ,WAVE.waveFrameRate = sampleRate
-    ,WAVE.waveBitsPerSample = 32
-    ,WAVE.waveFrames = Just $ length ws --Nothing
-    }
-  ,WAVE.waveSamples = [map unDiscrete ws]
-  }
-
 -- | Triangle wave of the given frequency
 triWave :: Double -> Waveform Double Double
 triWave f = sampleFrom $ \t -> let r = t * f - fromIntegral (floor (t * f) :: Int) in if r < 0.25
@@ -279,19 +269,19 @@ triWave f = sampleFrom $ \t -> let r = t * f - fromIntegral (floor (t * f) :: In
     then 2 - (4 * r)
     else -4 + (4 * r)
 
+-- | Digital saw wave with given frequency
 sawWave :: Double -> Waveform Double Double
 sawWave f = sampleFrom $ \t -> 2 * (t * f - fromIntegral (floor (t * f) :: Int)) - 1
 
+-- | Ramp from 0 to 1 over a time period
 ramp :: Double -> Double -> Double
 ramp = rampFrom 0
 
-rampFrom :: Double -> Double -> Double -> Double
+-- | Ramp from @x0@ to 1 from time zero to the max time
+rampFrom :: Double -> Double -> (Double -> Double)
 rampFrom x0 time t = if t < time
   then x0 + (1 - x0) * (max t 0)/time
   else 1
-
-waveTimbre :: Functor f => f DWave -> f Wavetable
-waveTimbre = fmap (discretize . tickTable stdtr)
 
 -- | Arbitrarily chosen standard tick rate, used in @'testWave'@
 stdtr :: Num a => a
@@ -307,51 +297,11 @@ testWave len fp w = print w >> pure w >>= WAVE.putWAVEFile (fp ++ ".wav") . wave
 testWaveStream :: Double -> String -> [Discrete] -> IO ()
 testWaveStream len fp = WAVE.putWAVEFile (fp ++ ".wav") . wavestreamToWAVE (floor $ len*stdtr) stdtr
 
-
--- | Outputs a sound test of the given @'PitchFactorDiagram'@ as an interval above @'concertA'@ as a @'sinWave'@ to the file @diag.wav@ for testing.
---testDiagram :: PitchFactorDiagram -> IO ()
---testDiagram = putWAVEFile "diag.wav" . waveformToWAVE (3*32000) 32000 . tickTable 32000 . fmap doubleToDiscrete . buildTestTrack . realToFrac . diagramToRatio . normalizePFD
-  --where
-    --buildTestTrack p = sequenceNotes [((0,1),sinWave concertA),((1,2),sinWave (concertA * p)),((2,3), buildChord [1,p] concertA)]
-
--- | Converts a rhythm of @'DWave'@ notes to a combined @'DWave'@ according to the timing rules of @'Beat'@.
---sequenceToBeat :: Double -> Double -> Beat DWave -> DWave
---sequenceToBeat startAt totalLength (RoseBeat bs) = let dt = totalLength / genericLength bs in fst $ foldl (\(w,i) b -> (mergeWaves . (:[w]) . sequenceToBeat (i * dt) dt $ b,i+1)) (sampleFrom $ const 0,0) bs
---sequenceToBeat startAt totalLength Rest = sampleFrom $ const 0
---sequenceToBeat startAt totalLength (Beat w) = modulate muting (compactWave (startAt,startAt + totalLength)) $ timeShift startAt w
-
--- | Sequences some waves to play on the given time intervals.
-sequenceNotes :: (Ord t,Fractional t,Fractional a) => [((t,t),Waveform t a)] -> Waveform t a
-sequenceNotes = mergeWaves . map (\(t,w) -> modulate muting (compactWave t) $ timeShift (fst t) w)
-
--- | Builds a chord out of the given ratios relative to the root pitch
--- @
---  buildChord ratios root
--- @
-buildChord :: [Double] -> Double -> Waveform Double Double
-buildChord relPitches root = balanceChord $ map (triWave . (root *)) relPitches
-
--- | Builds a chord out of the given ratios relative to the root pitch, without normalizing the volume.
--- (Warning: may be loud)
-buildChordNoBalance :: [Double] -> Double -> DWave
-buildChordNoBalance relPitches root = mergeWaves $ map (triWave . (root *)) relPitches
-
--- | Builds an equal temperament minor chord over the given root pitch
-minorChordOver :: Double -> DWave
-minorChordOver = buildChord
-  [semi ** 0
-  ,semi ** 3
-  ,semi ** 7
-  ]
-
 -- | Concert A4 frequency is 440Hz
 concertA :: Num a => a
 concertA = 440
 
--- | Build an envelope waveform with the given parameters: Predelay Time, Attack Time, Hold Time, Decay Time, Sustain Level, Release Time
---envelope :: Envelope Double Double -> DWave
---envelope e@(Envelope del att hol dec _ _) = susEnvelope e (del + att + hol + dec)
-
+-- | An envelope that suspends for @noteDuration@ before releasing
 susEnvelope :: Envelope Tick Discrete -> Tick -> Wavetable
 susEnvelope (Envelope del att hol dec sus rel) noteDuration = sampleFrom $ \t -> if t < del
   then 0
@@ -369,6 +319,7 @@ susEnvelope (Envelope del att hol dec sus rel) noteDuration = sampleFrom $ \t ->
   where
     divTD a b = fromIntegral a / fromIntegral b
 
+-- | An envelope that suspends forever instead of releasing
 suspendVelope :: Double -> Double -> Double -> Double -> Double -> DWave
 suspendVelope del att hol dec sus = sampleFrom $ \t -> if t < del
   then 0
@@ -380,8 +331,9 @@ suspendVelope del att hol dec sus = sampleFrom $ \t -> if t < del
         then 1 + (t - del - att - hol)/dec * (sus - 1)
         else sus
 
-envelope :: Double -> Double -> Double -> Double -> Double -> Double -> DWave
-envelope del att hol dec sus rel = sampleFrom $ \t -> if t < del
+-- | Synthesize an envelope to a 'DWave'
+envelope :: Envelope Double Double -> DWave
+envelope (Envelope del att hol dec sus rel) = sampleFrom $ \t -> if t < del
   then 0
   else if t - del < att
     then (t - del) / att
@@ -393,8 +345,10 @@ envelope del att hol dec sus rel = sampleFrom $ \t -> if t < del
           then sus * (1 - (t - del - att - hol - dec)/rel)
           else 0
 
-data Envelope a b = Envelope a a a a b a
+-- | DAHDSR envelope with times @t@ and sustain level @b@
+data Envelope t b = Envelope t t t t b t
 
+-- | Discretize an envelope by converting times into ticks
 discretizeEnvelope :: Double -> Envelope Double Double -> Envelope Tick Discrete
 discretizeEnvelope tickRate (Envelope del att hol dec sus rel) = Envelope (dd del) (dd att) (dd hol) (dd dec) (doubleToDiscrete sus) (dd rel)
   where
@@ -407,13 +361,6 @@ timeShift dt = sampleFrom . (. subtract dt) . sample
 -- | Shift a wave in time such that the new zero is at the specified position
 seekTo :: Num t => t -> Waveform t a -> Waveform t a
 seekTo dt = sampleFrom . (. (+dt)) . sample
-
--- | Play several waves in a row with eqqual time each, using @'sequenceNotes'@.
---equalTime :: Double -> [DWave] -> DWave
---equalTime dt = sequenceNotes . foldl go []
-  --where
-    --go xs@(((_,t1),_):_) k = ((t1,t1 + dt),k):xs
-    --go [] k = [((0,dt),k)]
 
 -- | Modify the amplitude of a wave by a constant multiple
 setVolume :: Num a => a -> Waveform t a -> Waveform t a
@@ -493,7 +440,6 @@ sampledConvolution convolutionSampleRate convolutionRadius profile w = sampleFro
     samplesPerSide = floor (convolutionRadius * convolutionSampleRate) :: Int
     --sampleCount = 2 * samplesPerSide + 1
 
-
 -- | Makes a filter which selects frequencies near @bandCenter@ with tuning parameter @bandSize@.
 -- Try: @'optimizeFilter' 200 . 'tickTable' 'stdtr' $ 'bandpassFilter' 'concertA' 100@
 bandpassFilter :: Fractional a 
@@ -505,28 +451,18 @@ bandpassFilter bandCenter bandSize = sampleFrom $ \t -> if t == 0 then 1 else re
     !bandFreq = 2 * pi * bandSize
     !centerFreq = 2 * pi * bandCenter
 
-type FilterParams = (Double,Double,Double)
-
+-- | Ladder filter, adapted from VCV Rack
 ladderFilter :: Double -> [Double] -> [Double] -> [Double] -> [(Double,Double,Double,Double)]
-ladderFilter sampleRate reso cutoffs inputs = scanl stepSt (1e-6,2e-6,0,0) $ zip3 reso cutoffs inputs
-  where
-    fmapTup f (!a,!b,!c,!d) = (f a,f b,f c,f d)
-    zipTup f (!a,!b,!c,!d) (!a',!b',!c',!d') = (f a a',f b b',f c c',f d d')
-    h = 1/sampleRate
-    rkf (r,c,i) (x1,x2,x3,x4) = {-trace ("rkf(" ++ show r ++ ", " ++ show c ++ ", " ++ show i ++ ")") $-} let cut = 2 * pi * c in (cut * (i - r * x3 - x1),cut * (x1 - x2),cut * (x2 - x3),cut * (x3 - x4))
-    stepSt x i = let
-      k1 = fmapTup (h *) $ rkf i x
-      k2 = fmapTup (h *) $ rkf i (zipTup (\k xi -> xi + k/2) k1 x)
-      k3 = fmapTup (h *) $ rkf i (zipTup (\k xi -> xi + k/2) k2 x)
-      k4 = fmapTup (h *) $ rkf i (zipTup (+) k3 x)
-      in zipTup (\xi ki -> xi + ki/6) x $ zipTup (+) (zipTup (+) (fmapTup (*2) k2) (fmapTup (*2) k3)) (zipTup (+) k1 k4)
-
-ladderFilter' :: Double -> [Double] -> [Double] -> [Double] -> [(Double,Double,Double,Double)]
-ladderFilter' sampleRate reso cutoffs inputs = fmap (FV.convert :: FV.VecList 4 Double -> (Double,Double,Double,Double)) $ rkSolveStepSize (1/sampleRate) rkf (FV.mk4 1e-6 1e-6 1e-6 1e-6) (zip3 reso cutoffs inputs)
+ladderFilter sampleRate reso cutoffs inputs = fmap (FV.convert :: FV.VecList 4 Double -> (Double,Double,Double,Double)) $ rkSolveStepSize (1/sampleRate) rkf (FV.mk4 1e-6 1e-6 1e-6 1e-6) (zip3 reso cutoffs inputs)
   where
     rkf (r,c,i) x = let cut = 2 * pi * c in FV.mk4 (cut * (i - r * (x FV.! 2) - (x FV.! 0))) (cut * (x FV.! 0 - x FV.! 1)) (cut * (x FV.! 1 - x FV.! 2)) (cut * (x FV.! 2 - x FV.! 3))
 
-rkSolve :: Applicative f => (i -> f Double -> f Double) -> f Double -> [i] -> [f Double]
+-- | Use Runge-Kutta method to solve the diffeq
+rkSolve 
+  :: Applicative f => (i -> f Double -> f Double) -- ^ User suplied function mapping inputs to a coefficient matrix
+  -> f Double -- ^ Initial value
+  -> [i] -- ^ Stream of inputs
+  -> [f Double] -- ^ Stream of outputs
 rkSolve rkf = scanl stepSt
   where
     stepSt x i = let
@@ -536,15 +472,20 @@ rkSolve rkf = scanl stepSt
       k4 = rkf i (liftA2 (+) k3 x)
       in liftA2 (\xi ki -> xi + ki/6) x $ liftA2 (+) (liftA2 (+) (fmap (*2) k2) (fmap (*2) k3)) (liftA2 (+) k1 k4)
 
+-- | Like @'rkSolve'@ but using non-unit step size by multiplying the coefficient matrix by a factor
 rkSolveStepSize :: Applicative f => Double -> (i -> f Double -> f Double) -> f Double -> [i] -> [f Double]
 rkSolveStepSize h rkf = rkSolve ((fmap (* h) .) . rkf)
 
+-- | Drive scaling function adapted from VCV Rack
 scaledDrive :: Double -> Double
 scaledDrive drv = (1 + drv) ** 5
 
+-- | Uses @'ladderFilter'@ to low pass filter the input with the given resonance and cutoff
 lowPassFilter :: Double -> [Double] -> [Double] -> [Double] -> [Double]
 lowPassFilter rate res cut = fmap (\(_,_,_,d) -> d) . ladderFilter rate res cut
 
+-- | Synthesize from a continuous profile by sampling frequencies.
+-- Doesn't work very well; prefer 'synthFromDisreteProfile'.
 synthFromFreqProfile :: (Double,Double) -> Double -> DWave -> DWave
 synthFromFreqProfile (f0,f1) fSampRate prof = sampleFrom $ \t -> max (-1) $ min 1 $ sum . fmap ((/fromIntegral (length sampPoints)) . sampleAt t . getComponent) $ sampPoints
   where
@@ -553,23 +494,29 @@ synthFromFreqProfile (f0,f1) fSampRate prof = sampleFrom $ \t -> max (-1) $ min 
     --jitterFactor k = (fromIntegral (floor (((k - f0) / (f1 - f0)) * 81083) `mod` 115)) / 115
     --jitter k = k + (2/fSampRate) * jitterFactor k
 
+-- | Continuous saxopohone profile adapted from https://asa.scitation.org/doi/10.1121/1.396474
 saxProfile :: DWave
 saxProfile = sampleFrom $ \f -> let x = f/fb in sqrt (n * x/(1 + x**7))
   where
     fb = 618
     n = 1.088910
 
+-- | Synthesize a wavetable from the specified relative strengths of various frequencies.
+-- Essentially an inverse fourier transform
 synthFromDiscreteProfile :: [(Double,Double)] -> Wavetable
 synthFromDiscreteProfile fs = {-solidSlice 0 (truncate $ stdtr/(1 :: Double)) .-} tickTable stdtr . discretize . mergeWaves . fmap (\(f,amp) -> fmap (*(normFactor * amp)) $ sinWaveWithPhase f f) $ fs
   where
     normFactor = 0.9/(sum $ fmap snd fs)
 
+-- | Produces a discrete profile of relative harmonic strengths from the given functions.
+-- Try @'harmonicEquationToDiscreteProfile' (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))@
 harmonicEquationToDiscreteProfile :: (Double -> Double) -> (Double -> Double) -> Double -> [(Double,Double)]
 harmonicEquationToDiscreteProfile oddF evenF f0 = go (15 :: Int)
   where
     go 0 = []
     go k = (fromIntegral k * f0,(if even k then evenF else oddF) $ fromIntegral k) : go (k-1)
 
+-- | Roughly resemebles the spectrum of a saxophone
 discSaxProfile :: [(Double,Double)]
 discSaxProfile = f1 ++ f2
   where
@@ -589,6 +536,7 @@ discSaxProfile = f1 ++ f2
     ,(3241,0.005567)
     ]
 
+-- | Roughly resemebles the spectrum of a saxophone
 genSaxProfile' :: Double -> [(Double,Double)]
 genSaxProfile' f0 =
   [(1 * f0,0.0474475510012406)
@@ -604,6 +552,8 @@ genSaxProfile' f0 =
   ,(11 * f0,0.00826471159302181)
   ,(12 * f0,0.00280485189554740)
   ]
+
+-- | Roughly resemebles the spectrum of a saxophone
 genSaxProfile :: Double -> [(Double,Double)]
 genSaxProfile f0 = f1 ++ f2
   where
@@ -622,30 +572,18 @@ genSaxProfile f0 = f1 ++ f2
     ,(9 * f0,0.00881)
     ,(11 * f0,0.005567)
     ]
-  --[(1023,0.14190)
-  --,(2044,0.05463)
-  --,(3064,0.03471)
-  --,(5107,0.01625)
-  --]
 
+-- | Rough saxophone timbre from @'gen
 fakedSaxTimbre :: Double -> Wavetable
 fakedSaxTimbre = synthFromDiscreteProfile . genSaxProfile'
 
+-- | A timbre that consists of several sin wave voices at fixed chord intervals from each other
 chordSinTimbre :: ChordVoicing PitchFactorDiagram -> Double -> Wavetable
 chordSinTimbre c r = discretize . tickTable stdtr . balanceChord . fmap (sinWave . flip intervalOf r) $ getVoiceList c
 
-{-
-sampledConvolve modf profile w = sampleFrom $ \p -> modf (sample (sample profile p) p) (sample w p)
-
-takeSamples :: 
-takeSamples sampleRate w = map (sample w . (/sampleRate)) [0 .. 115]
-  ,waveSamples = [map (doubleToSample . sample w . (/sampleRate)) [0 .. fromIntegral (numFrames - 1)]]
--}
-
-
 -- | Discretize the output of a @'Double'@ producing waveform
 discretize :: Functor f => f Double -> f Discrete
-discretize = fmap (Discrete . properFloor . (*discFactor))
+discretize = fmap doubleToDiscrete
 
 -- | Discretize the input to a @'Double'@ consuming waveform
 tickTable :: Double -- ^ Sample rate. Each tick is @1/sampleRate@ seconds

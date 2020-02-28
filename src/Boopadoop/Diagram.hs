@@ -3,12 +3,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveFunctor #-}
--- | Tools for creating and manipulation Pitch Factor Diagrams, a tool for representing musical 
--- intervals and examining their relations.
 module Boopadoop.Diagram where
 
 import Data.Ratio
-import Data.Bits
 import Data.Monoid
 import Data.List
 import qualified Data.Set as Set
@@ -16,26 +13,33 @@ import Data.Numbers.Primes
 import Data.Align (salign)
 import Boopadoop.Rhythm (SummaryChar(sumUp))
 
-newtype TwelveTone = MkTwelveTone {getTTNum :: Int} deriving (Eq,Num)
+-- | Represents a note in an arbitrary twelve-toned scale.
+newtype TwelveTone = MkTwelveTone 
+  {getTTNum :: Int -- ^ Always in [0..11]
+  } deriving (Eq,Num)
 
 instance Monoid TwelveTone where
   mempty = twelveTone 0
 
+-- | Interval addition modulo octaves
 instance Semigroup TwelveTone where
   (<>) = addOctave
 
 instance Monoid (Octaved TwelveTone) where
   mempty = inOctave 0 $ twelveTone 0
 
+-- | Interval addition respecting octaves
 instance Semigroup (Octaved TwelveTone) where
   a <> b = let (o,p) = (getTTNum (getPitchClass a) + getTTNum (getPitchClass b)) `divMod` 12 in Octaved (o + getOctave a + getOctave b) (twelveTone p)
 
 instance Ord TwelveTone where
  compare a b = compare (getTTNum a) (getTTNum b)
 
+-- | Smart constructor for @'TwelveTone'@ accepting only values in [0..11]
 twelveTone :: Int -> TwelveTone
 twelveTone k = if k `elem` [0..11] then MkTwelveTone k else error $ "twelveTone " ++ show k ++ " not in range"
 
+-- | Convert from an octaved twelve tone to the corresponding non-octaved integer number of tones about the root
 ttDeoctave :: Octaved TwelveTone -> Int
 ttDeoctave ott = 12 * getOctave ott + getTTNum (getPitchClass ott)
 
@@ -51,15 +55,19 @@ instance Show TwelveTone where
 instance Show (Octaved TwelveTone) where
   show (Octaved k t) = "Octaved " ++ show k ++ "; " ++ show t
 
+-- | Produce a twelve toned note from a solfeck pitch symbol
 ttFromSolfeck :: Char -> Maybe TwelveTone
 ttFromSolfeck = fmap twelveTone . (`elemIndex` "0123456789ab")
 
+-- | Invert a twelve tone pitch. Has @t <> 'invTT' t = 'mempty'@
 invTT :: TwelveTone -> TwelveTone
 invTT = twelveTone . (`mod` 12) . negate . getTTNum
 
+-- | The major scale in chord form
 ttMajor :: Chord TwelveTone
 ttMajor = chordOf . fmap twelveTone $ [0,2,4,5,7,9,11]
 
+-- | Go one position down the twelve tone major scale
 ttScaleDown :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
 ttScaleDown root p = (inOctave (-1) $ invTT delta) <> p
   where
@@ -78,6 +86,7 @@ ttScaleDown root p = (inOctave (-1) $ invTT delta) <> p
       11 -> 2
       _ -> error "Too big of interval"
 
+-- | Go one position up the twelve tone major scale
 ttScaleUp :: TwelveTone -> Octaved TwelveTone -> Octaved TwelveTone
 ttScaleUp root p = inOctave 0 (twelveTone delta) <> p
   where

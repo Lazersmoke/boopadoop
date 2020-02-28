@@ -37,11 +37,6 @@ dependencies:
 library:
   source-dirs: 
   - src
-  other-modules:
-  - Boopadoop.Diagram
-  - Boopadoop.Rhythm
-  - Boopadoop.Interval
-  - Boopadoop.Discrete
   ghc-options:
   - -Wall
   c-sources: cbits/cstuff.cpp

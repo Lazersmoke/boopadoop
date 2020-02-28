@@ -18,6 +18,7 @@ import Control.Concurrent
 
 foreign import ccall "cstuff.cpp PlayAudioStream" c_PlayAudioStream :: FunPtr AudioSourceCallback -> FunPtr StartCoordCallback -> IO ()
 foreign import ccall "cstuff.cpp &sinWaveLDC" sinWaveLDC :: FunPtr AudioSourceCallback
+foreign import ccall "cstuff.cpp hask_sleep" c_sleep :: CUInt -> IO ()
 
 type AudioSourceCallback = CUInt -> Ptr Float -> Ptr () -> IO (Ptr ())
 foreign import ccall "wrapper" mkAudioSourceCallback :: AudioSourceCallback -> IO (FunPtr AudioSourceCallback)
@@ -61,18 +62,20 @@ forceStreamEval _ [] = []
 forceStreamEval 0 xs = xs
 forceStreamEval !i (x:xs) = x `seq` (x : forceStreamEval (i-1) xs)
 
-playWavestream :: MVar CULong -> IORef Bool -> [Discrete] -> IO ()
+playWavestream :: MVar () -> IORef Bool -> [Discrete] -> IO ()
 playWavestream startCoord ks ws = do
   cb <- mkAudioSourceCallback (wavestreamAudioCallback ks ws)
-  sccb <- mkSCCB $ putMVar startCoord
+  sccb <- mkSCCB $ (\_ -> forkIO (putMVar startCoord ()) *> pure ())
   c_PlayAudioStream cb sccb *> freeHaskellFunPtr cb *> freeHaskellFunPtr sccb
 
-explainNotes :: TimeStream String -> IO ()
-explainNotes EndStream = pure ()
-explainNotes (TimeStream t x xs) = do
-  _ <- forkIO $ putStrLn x
-  threadDelay (floor $ t * 1000000)
-  explainNotes xs
+explainNotes :: IORef Bool -> TimeStream String -> IO ()
+explainNotes _ EndStream = pure ()
+explainNotes ks (TimeStream t x xs) = readIORef ks >>= \doDie -> if doDie
+  then pure ()
+  else do
+    putStrLn x
+    threadDelay (floor $ t * 100000)
+    explainNotes ks xs
 
 chunkSamples :: [Discrete] -> Int -> [BSS.ByteString]
 chunkSamples ws blockSize = let (out,rest) = splitAt blockSize ws in if null out then [] else let x = BSL.toStrict (BSB.toLazyByteString (foldl mappend mempty . concatMap packFloat $ out)) in x `seq` (x : chunkSamples rest blockSize)
@@ -84,7 +87,7 @@ wavestreamToLazyByteString :: [Discrete] -> BSL.ByteString
 wavestreamToLazyByteString xs = BSL.fromChunks $ chunkSamples xs stdtr
 
 listenUnboundedWavestream :: [Discrete] -> IO ()
-listenUnboundedWavestream = WAVE.putWAVEFile "listen.wav" . finiteWavestreamToWAVE stdtr
+listenUnboundedWavestream ws = WAVE.putWAVEFile "listen.wav" . wavestreamToWAVE (length ws) stdtr $ ws
 
 listenWavestream' :: Double -> [Discrete] -> IO ()
 listenWavestream' t w = WAVE.putWAVEFile "listen.wav" (wavestreamToWAVE (floor $ stdtr * t) stdtr w)
@@ -109,14 +112,6 @@ listenChords = listenWavetable . mediumFO . compose (stdtr * 7) . fmap (tickTabl
     mediumFO = amplitudeModulate (tickTable stdtr . discretize . fmap abs $ triWave 3)
 
 -}
-listenTimedSinesKey :: Double -> Timed (Maybe (Octaved PitchFactorDiagram)) -> IO ()
-listenTimedSinesKey k = listenTimedTimbreKey k (waveTimbre sinWave)
-
-listenTimedTimbreKey :: Double -> (Double -> Wavetable) -> Timed (Maybe (Octaved PitchFactorDiagram)) -> IO ()
-listenTimedTimbreKey k timbre = listenUnboundedWavestream . composeTimed tempo . niceEnvelope tempo . fmap (fmap (timbre . flip intervalOf k))
-  where
-    tempo = floor $ stdtr / (4 :: Double)
-
 listenTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamTimbreKey k timbre x = listenUnboundedWavestream $ makeWavestreamTimeStreamTimbreKey k timbre x
 
@@ -124,7 +119,7 @@ makeWavestreamTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStre
 makeWavestreamTimeStreamTimbreKey k timbre = timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
   where
     tempo :: Int
-    tempo = floor stdtr
+    tempo = floor @Double stdtr
 
 listenTimeStreamFollow :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamFollow k timbre ts = listenUnboundedWavestream . meshWavestreams . fmap timbre . followValue' stdtr 0.5 . stepCompose (8/stdtr) . (fmap . fmap) (flip intervalOf k) $ ts
@@ -135,20 +130,8 @@ listenTimeStream = listenWavestream . timeStreamToValueStream stdtr
 listenTimbre :: (Double -> Wavetable) -> IO ()
 listenTimbre tim = listenTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) tim $ solFeckPFD "v0''''''0''''''0''''''0......0......0......0"
 
-niceEnvelope :: Tick -> Timed (Maybe Wavetable) -> Timed Wavetable
-niceEnvelope tempo = overTimings (\k -> maybe emptyWave (amplitudeModulate (env k)))
-  where
-    env k = susEnvelope de (tempo * k - floor ((0.01 :: Double) * stdtr))
-    de = (discretizeEnvelope stdtr $ Envelope 0.001 0.01 0.07 0.01 0.5 0.01)
-
---niceEnvelopets :: Tick -> TimeStream (Maybe Wavetable) -> TimeStream Wavetable
---niceEnvelopets tempo = overTimingsTimeStream (\r -> maybe emptyWave (amplitudeModulate (env r)))
-  --where
-    --env k = susEnvelope de (fromRational k - 0.01)
-    --de = (discretizeEnvelope stdtr $ Envelope 0.001 0.01 0.07 0.01 0.5 0.01)
-
 listenSolfeck :: String -> IO ()
-listenSolfeck = listenSolfeckTimbre (waveTimbre sinWave)
+listenSolfeck = listenSolfeckTimbre (fmap (discretize . tickTable stdtr) sinWave)
 
 listenSolfeckTimbre :: (Double -> Wavetable) -> String -> IO ()
 listenSolfeckTimbre tim = listenTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) tim . solFeckPFD
@@ -187,7 +170,7 @@ toLilyPond (TimeStream t mx xs) = case mx of
     in decodeTT ++ theOctave ++ theTime ++ (if doDot then "." else "") ++ " " ++ toLilyPond xs
   Nothing -> "r" ++ theTime ++ " " ++ toLilyPond xs
   where
-   theTime = show @Int . floor @Double . (2^^) . (if doDot then (+1) else id) . round $ logTime
+   theTime = show @Int . floor @Double . (2^^) . (if doDot then (+(1 :: Int)) else id) . round $ logTime
    doDot = odd @Int . round $ 2 * logTime
    logTime = logBase (2 :: Double) . realToFrac $ recip t
 toLilyPond EndStream = ""

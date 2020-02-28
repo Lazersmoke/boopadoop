@@ -38,6 +38,7 @@ main = do
           putStrLn "Now playing! Press enter to stop"
           _ <- getLine
           putStr "Waiting for sound to stop playing..."
+          hFlush stdout
           writeIORef ks True
         _ <- takeMVar pt
         _ <- takeMVar wt
@@ -47,24 +48,26 @@ main = do
 main' :: IO ()
 main' = do
   notes <- genMusic
-  let _sideOutTime = 90
-  let noteStream = limitTimeStream 90 . fmap (Just . snd . getExplained) $ notes
+  let sideOutTime = 10
+  let noteStream = limitTimeStream (fromIntegral sideOutTime) . fmap (Just . snd . getExplained) $ notes
   let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . fmap (Just . ttPFD . snd . getExplained) $ notes
   ks <- newIORef False
   pt <- newMVar ()
   wt <- newMVar ()
   startCoord <- newEmptyMVar
   _ <- forkIO $ readMVar startCoord *> putStrLn "Start Now!!!!!!!!"
-  _ <- forkIO $ readMVar startCoord *> explainNotes (fmap getExplanation notes)
+  _ <- forkIO $ readMVar startCoord *> explainNotes ks (fmap getExplanation notes)
   _playThread <- forkIO $ (takeMVar pt *> threadDelay 100 *> playWavestream startCoord ks ws *> putMVar pt ())
-  _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' 90 ws *> putMVar wt ())
+  _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' (fromIntegral sideOutTime) ws *> putMVar wt ())
   putStrLn "Now playing! Press enter to stop"
   _ <- getLine
   putStr "Waiting for sound to stop playing..."
+  hFlush stdout
   writeIORef ks True
   _ <- takeMVar pt
   putStrLn " Check!"
   putStr "Waiting for listen.wav to be written..."
+  hFlush stdout
   _ <- takeMVar wt
   putStrLn " Check!"
   putStrLn "Goodbye."

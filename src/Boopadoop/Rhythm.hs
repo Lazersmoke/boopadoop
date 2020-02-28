@@ -3,20 +3,13 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TupleSections #-}
--- | Representing rhythms as rose trees.
+-- | Representing rhythms as step functions of rational time
 module Boopadoop.Rhythm where
 
-import Data.Tree
 import Control.Monad
-import Debug.Trace
-import GHC.Exts
 
--- | A rhythm is represented as a rose tree where each subtree is given time with integer weights.
--- Leaves are any data.
-data Beat a = RoseBeat [(Int,Beat a)] | Beat a deriving (Functor)
-
-newtype Timed a = Timed [(Int,a)] deriving Functor
-
+-- | A 'TimeStream' is a list annotated at each entry with a @'Rational'@ length of time, in arbitary units, that it lasts for.
+-- This makes a 'TimeStream' a step function of rational time that can be streamed.
 data TimeStream a = TimeStream Rational a (TimeStream a) | EndStream
 
 instance Show a => Show (TimeStream a) where
@@ -40,6 +33,7 @@ instance Monad TimeStream where
       go k t' (TimeStream t x xs) = TimeStream (t * t') x (go k t' xs)
       go k _ EndStream = k
 
+-- | Zip two timestreams together with a combining function, interlacing them as required.
 modulateTimeStream :: (a -> b -> c) -> TimeStream a -> TimeStream b -> TimeStream c
 modulateTimeStream f (TimeStream tl xl xsl) (TimeStream tr xr xsr) = case compare tl tr of
   LT -> TimeStream tl (f xl xr) $ modulateTimeStream f xsl (TimeStream (tr - tl) xr xsr)
@@ -51,18 +45,22 @@ instance Foldable TimeStream where
   foldr f z (TimeStream _ x xs) = f x (foldr f z xs)
   foldr _ z EndStream = z
 
+-- | Reverse a @'TimeStream'@. This is O(n) and of course breaks for infinite 'TimeStream's
 reverseTimeStream :: TimeStream a -> TimeStream a
 reverseTimeStream = go EndStream
   where
     go acc EndStream = acc
     go acc (TimeStream t x xs) = go (TimeStream t x acc) xs
 
+-- | Limit a (possibly infinite) 'TimeStream' to have length at most @tmax@. This is 'take' but it works over the time domain.
 limitTimeStream :: Rational -> TimeStream a -> TimeStream a
 limitTimeStream !tmax (TimeStream t x xs) = if t < tmax
   then TimeStream t x (limitTimeStream (tmax - t) xs)
   else TimeStream tmax x EndStream
 limitTimeStream _ EndStream = EndStream
 
+-- | Use the first 'TimeStream' until it ends or a specified time (whichever is earlier), then branch to the second 'TimeStream'.
+-- Also returns the last value of the first stream before the branch occurs
 branchAfterTimeStream :: Rational -> TimeStream a -> TimeStream a -> (a,TimeStream a)
 branchAfterTimeStream !tmax (TimeStream t x EndStream) branch = (x,TimeStream (min t tmax) x branch)
 branchAfterTimeStream !tmax (TimeStream t x xs) branch = if t < tmax
@@ -70,97 +68,36 @@ branchAfterTimeStream !tmax (TimeStream t x xs) branch = if t < tmax
   else (x,TimeStream tmax x branch)
 branchAfterTimeStream _ EndStream branch = (error "branchAfterTimeStream: forced last element of empty stream",branch)
 
+-- | Use the first 'TimeStream' until it ends, then switch to the second one, and return the last value before the branch.
+-- Same as @('branchAfterTimeStream' Infinity)@.
 branchAfterEndStream :: TimeStream a -> TimeStream a -> (a,TimeStream a)
 branchAfterEndStream (TimeStream t x EndStream) branch = (x,TimeStream t x branch)
 branchAfterEndStream (TimeStream t x xs) branch = let (l,ts) = branchAfterEndStream xs branch in (l,TimeStream t x ts)
 branchAfterEndStream EndStream branch = (error "branchAfterEndStream: forced last element of empty stream",branch)
 
+-- | Unsafe 'tail' for 'TimeStream's
 forceLastAppendTimeStream :: TimeStream a -> a
 forceLastAppendTimeStream (TimeStream _ x EndStream) = x
 forceLastAppendTimeStream (TimeStream _ _ xs) = forceLastAppendTimeStream xs
 forceLastAppendTimeStream _ = error "forceLastAppendTimeStream: Empty TimeStream"
 
-overTimings :: (Int -> a -> b) -> Timed a -> Timed b
-overTimings f (Timed xs) = Timed $ fmap (\(k,a) -> (k,f k a)) xs
-
+-- | Map a 'TimeStream' in a way that depends on the timings.
 overTimingsTimeStream :: (Rational -> a -> b) -> TimeStream a -> TimeStream b
 overTimingsTimeStream f (TimeStream t x xs) = TimeStream t (f t x) $ overTimingsTimeStream f xs
 overTimingsTimeStream _ EndStream = EndStream
 
+-- | Stretch a 'TimeStream' in the time domain by a constant factor.
 stretchTimeStream :: Rational -> TimeStream a -> TimeStream a
 stretchTimeStream factor (TimeStream t x xs) = TimeStream (t * factor) x (stretchTimeStream factor xs)
 stretchTimeStream _ EndStream = EndStream
-
-instance SummaryChar a => Show (Timed a) where
-  show (Timed bs) = "[" ++ (bs >>= \(k,b) -> sumUp b : replicate (k-1) '-') ++ "]"
-
-instance Semigroup (Timed a) where
-  (<>) (Timed a) (Timed b) = Timed (a ++ b)
-
-instance Monoid (Timed a) where
-  mempty = Timed []
-
-instance Applicative Timed where
-  pure x = Timed [(1,x)]
-  (<*>) = ap
-
-instance Monad Timed where
-  t >>= f = join' $ fmap f t
-    where
-      join' (Timed xs) = Timed $ concatMap (\(k,Timed timed) -> fmap (\(k',x) -> (k * k',x)) timed) xs
-
-instance IsList (Timed a) where
-  type Item (Timed a) = (Int,a)
-  fromList = Timed
-  toList (Timed t) = t
-
-viewBeat :: Beat String -> String
-viewBeat beat = drawTree . toTree $ beat
-  where
-    toTree (RoseBeat bs) = Node "RoseBeat" (fmap (\(k,a) -> fmap (("." ++ show k)++) $ toTree a) bs)
-    toTree (Beat b) = Node ("Beat: " ++ b) []
-
-flattenTimes :: (Beat a -> Beat a) -> Beat a -> Beat a
-flattenTimes _ (Beat a) = Beat a
-flattenTimes hf (RoseBeat xs) = RoseBeat $ concatMap (\(k,w) -> (1,flattenTimes hf w) : replicate (k-1) (1,hf (flattenTimes hf w))) xs
-
-beatList :: Beat a -> [a]
-beatList (Beat a) = [a]
-beatList (RoseBeat xs) = concatMap (beatList . snd) xs
-
---analyzeBeat :: SummaryChar a => Beat a -> String
---analyzeBeat (RoseBeat bs) = show $ fmap (\(k,b) -> (k,analyzeBeat b)) $ bs
---analyzeBeat b = show b
-
-instance Applicative Beat where
-  pure = Beat
-  Beat f <*> Beat x = Beat $ f x
-  Beat f <*> RoseBeat xs = RoseBeat $ fmap (\(k,x) -> (k,fmap f x)) xs
-  RoseBeat fs <*> x = RoseBeat $ fmap (\(k,f) -> (k,f <*> x)) fs
-
-instance Monad Beat where
-  Beat x >>= f = f x
-  RoseBeat xs >>= f = RoseBeat $ fmap (\(k,x) -> (k,x >>= f)) xs
-
-subdivs :: [(Int,a)] -> Int
-subdivs = sum . fmap fst
 
 -- | Class for things that can be summarized in a single character, for use in printing out rhythms.
 class SummaryChar a where
   sumUp :: a -> Char
 
--- | Show the rhythm by printing the summary characters, or @'.'@ for rests.
-instance SummaryChar a => Show (Beat a) where
-  show (RoseBeat bs) = "[" ++ (bs >>= \(k,b) -> show b ++ replicate (k-1) '-') ++ "]"
-  show (Beat x) = [sumUp x]
-
 instance SummaryChar a => SummaryChar (Maybe a) where
   sumUp Nothing = '_'
   sumUp (Just x) = sumUp x
-
-instance SummaryChar DrumRack where
-  sumUp Kick = 'O'
-  sumUp Snare = 'x'
 
 instance SummaryChar () where
   sumUp () = '\''
@@ -172,45 +109,10 @@ instance SummaryChar Bool where
   sumUp True = '1'
   sumUp False = '0'
 
--- | A rack of drums. Simple enumeration of the different possible drum types.
-data DrumRack = Kick | Snare
-
-weightTimes :: [Beat a] -> Beat a
-weightTimes bs = RoseBeat $ zip (fmap (`div` tot) ts) bs
-  where
-    ts = fmap getTime $ bs
-    tot = traceShowId $ product ts
-    getTime (Beat _) = 1
-    getTime (RoseBeat xs) = min 1 $ sum . fmap fst $ xs
-
+-- | Produce a 'TimeStream' from a list of steps, with equal timing
 equalTime :: [a] -> TimeStream a
 equalTime = foldr (TimeStream 1) EndStream
 
--- | The standard rock beat (or half of it) played on the 'DrumRack'
-rockBeat :: TimeStream (Maybe DrumRack)
-rockBeat = equalTime [Just Kick,Nothing,Just Snare,Nothing]
-
-swingIt :: Beat Int
-swingIt = RoseBeat [(3,Beat 0),(1,Beat 1)]
-
-tremelloTwice :: a -> TimeStream a
-tremelloTwice a = equalTime [a,a]
-
-swingTremelloTwice :: a -> Beat a
-swingTremelloTwice a = RoseBeat [(3,Beat a), (1,Beat a)]
-
-repeatBeat :: Int -> TimeStream a -> TimeStream a
-repeatBeat k b = equalTime (replicate k ()) >> b
-
--- | Force there to be only prime divisions of time in the rhythm.
--- This is done without affecting the actual rhythm.
--- This operation is not uniquely valued in any way, and this algorithm prefers small primes first.
-{-
-primeBeat :: Beat a -> Beat a
-primeBeat (RoseBeat bs)
-  | isPrime (length bs) = RoseBeat $ map primeBeat bs
-  | otherwise = let (pf:_) = reverse $ primeFactors (length bs) in primeBeat . RoseBeat . map RoseBeat $ chunksOf pf bs
-primeBeat x = x
--}
-
-
+-- | Repeat a 'TimeStream' multiple times
+replicateTimeStream :: Int -> TimeStream a -> TimeStream a
+replicateTimeStream k b = equalTime (replicate k ()) >> b

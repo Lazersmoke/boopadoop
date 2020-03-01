@@ -41,6 +41,7 @@ packages:
 #
 extra-deps:
 - WAVE-0.1.4@sha256:ce0b98c4da47520c42453edd9db22710764e2ef0d291b4ae71153016d56e72f4,1003
+- serialport-0.4.7@sha256:faff483f73c8e8e9661dae3788795bb0f4a38413a49fccb77bcdc6827af50182,1430
 - primes-0.2.1.0
 - permutation-0.5.0.5
 

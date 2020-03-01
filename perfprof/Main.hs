@@ -15,7 +15,10 @@ import Data.IORef
 import Debug.Trace
 
 main :: IO ()
-main = do
+main = playArdSolfeck "0'''''''''........." -- main''
+
+main'' :: IO ()
+main'' = do
   putStr "Enter SolFeck or press enter to listent to generated music!\n> "
   hFlush stdout
   sf <- getLine
@@ -100,8 +103,8 @@ timingRuleSet = replicate 20 repeatLastTiming ++ replicate 4 halfSpeed ++ replic
 phraseRuleSet :: [CompositionRule a (TimeStream ())]
 phraseRuleSet = replicate 7 quarterNotes ++ replicate 15 eightNotes ++ replicate 5 sixteenths ++ replicate 2 halfNote ++ replicate 1 wholeNote
 
-eqTimbre :: Double -> Wavetable
-eqTimbre = synthFromDiscreteProfile . harmonicEquationToDiscreteProfile (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))
+--eqTimbre :: Double -> Wavetable
+--eqTimbre = synthFromDiscreteProfile . harmonicEquationToDiscreteProfile (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))
 
 --listenTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe PitchFactorDiagram) -> IO ()
 --playFile "listen.wav"

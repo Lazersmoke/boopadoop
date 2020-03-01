@@ -33,6 +33,7 @@ dependencies:
 - fixed-vector
 - random
 - time
+- serialport
 
 library:
   source-dirs: 

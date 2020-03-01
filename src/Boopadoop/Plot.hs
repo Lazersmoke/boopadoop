@@ -13,8 +13,14 @@ import qualified Data.ByteString as BSS
 import qualified Data.ByteString.Internal as BSI
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Char8 as BSC
 import Data.IORef
+import Data.Word
+import Data.Function
 import Control.Concurrent
+import Numeric
+
+import qualified System.Hardware.Serialport as Serial
 
 foreign import ccall "cstuff.cpp PlayAudioStream" c_PlayAudioStream :: FunPtr AudioSourceCallback -> FunPtr StartCoordCallback -> IO ()
 foreign import ccall "cstuff.cpp &sinWaveLDC" sinWaveLDC :: FunPtr AudioSourceCallback
@@ -61,6 +67,14 @@ forceStreamEval :: Int -> [Discrete] -> [Discrete]
 forceStreamEval _ [] = []
 forceStreamEval 0 xs = xs
 forceStreamEval !i (x:xs) = x `seq` (x : forceStreamEval (i-1) xs)
+
+playWavestreamBlockUntilStart :: [Discrete] -> IO ()
+playWavestreamBlockUntilStart ws = do
+  sc <- newEmptyMVar
+  ks <- newIORef False
+  _ <- forkIO $ playWavestream sc ks ws
+  () <- takeMVar sc
+  pure ()
 
 playWavestream :: MVar () -> IORef Bool -> [Discrete] -> IO ()
 playWavestream startCoord ks ws = do
@@ -119,7 +133,7 @@ makeWavestreamTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStre
 makeWavestreamTimeStreamTimbreKey k timbre = timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
   where
     tempo :: Int
-    tempo = floor @Double stdtr
+    tempo = floor @Double (stdtr / 1.5)
 
 listenTimeStreamFollow :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamFollow k timbre ts = listenUnboundedWavestream . meshWavestreams . fmap timbre . followValue' stdtr 0.5 . stepCompose (8/stdtr) . (fmap . fmap) (flip intervalOf k) $ ts
@@ -174,3 +188,144 @@ toLilyPond (TimeStream t mx xs) = case mx of
    doDot = odd @Int . round $ 2 * logTime
    logTime = logBase (2 :: Double) . realToFrac $ recip t
 toLilyPond EndStream = ""
+
+testStream :: TimeStream BSS.ByteString
+testStream = TimeStream 0 (mkPkt 0x01 "000000") (TimeStream 0 (mkPkt 0x00 "01") (TimeStream 1 (mkPkt 0x01 "ff0000") (TimeStream 0.01 (mkPkt 0x01 "00ff00") (TimeStream 1 (mkPkt 0x01 "0000ff") (TimeStream 0 (mkPkt 0x00 "00") EndStream)))))
+
+ttArdPacket :: Maybe TwelveTone -> BSS.ByteString
+ttArdPacket Nothing = mkPkt 0x01 "000000"
+ttArdPacket (Just tt) = mkPkt 0x01 $ case getTTNum tt of
+  -- Primary
+  0 -> "AA3939"
+  4 -> "FFAAAA"
+  7 -> "D46A6A"
+  -- Secondary
+  2 -> "AA6C39"
+  5 -> "FFD1AA"
+  9 -> "D49A6A"
+  -- Also secondary
+  3 -> "226666"
+  8 -> "669999"
+  10 -> "407F7F"
+  -- Compl
+  1 -> "2D882D"
+  6 -> "88CC88"
+  11 -> "55AA55"
+
+solFeckArd :: String -> TimeStream BSS.ByteString
+solFeckArd = stretchTimeStream 0.25 . TimeStream 0 (mkPkt 0x00 "01" {-"01"-}) . fmap (ttArdPacket . fmap getPitchClass) . solFeck
+
+sendArduinoTimeStream :: TimeStream BSS.ByteString -> IO ()
+sendArduinoTimeStream ts = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> do
+  threadDelay 3000000
+  Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
+  --forkIO $ Serial.recv sp 1 >>= print
+  go (TimeStream 3 (BSS.empty) ts) ser
+  Serial.send ser (BSS.pack [0x23,0x00,0x00])
+  putStrLn "Done!"
+  threadDelay 3000000
+  where
+    go (TimeStream t x xs) sp = do
+      Serial.send sp x
+      Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
+      --Serial.flush sp
+      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t)
+      threadDelay (floor $ t * 1000000)
+      go xs sp
+    go EndStream _ = pure ()
+    timeToBytes time = let millis = floor (time * 1000) in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
+
+playArdSolfeck :: String -> IO ()
+playArdSolfeck sol = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> do
+  threadDelay 3000000
+  Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
+  --forkIO $ Serial.recv sp 1 >>= print
+  let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . (fmap . fmap) ttPFD $ solFeck sol
+  playWavestreamBlockUntilStart ws
+  go (solFeckArd sol) ser
+  Serial.send ser (BSS.pack [0x23,0x00,0x00])
+  putStrLn "Done!"
+  threadDelay 3000000
+  where
+    go (TimeStream t x xs) sp = do
+      Serial.send sp x
+      Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
+      --Serial.flush sp
+      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t)
+      threadDelay (floor $ t * 1000000)
+      go xs sp
+    go _ _ = pure ()
+    timeToBytes time = let millis = floor (time * 1000) in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
+
+eqTimbre :: Double -> Wavetable
+eqTimbre = synthFromDiscreteProfile . harmonicEquationToDiscreteProfile (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))
+{-
+    recAck sp l fc = do
+      threadDelay 100000
+      fc' <- Serial.recv sp 1 >>= \x -> if BSS.null x then pure (fc + 1) else putStrLn "Got ack!" *> Serial.flush sp *> putMVar l () *> takeMVar l *> pure 0
+      if fc' > 10
+        then putMVar l () *> takeMVar l *> recAck sp l 0
+        else recAck sp l fc'
+-}
+
+mkPkt :: Word8 -> String -> BSS.ByteString
+mkPkt pktId datas = BSS.pack $ 0x23 : pktId : go datas
+  where
+    go b@(_:_:xs) = readHex' (take 2 b) : go xs
+    go _ = []
+
+doArduinoThing :: IO ()
+doArduinoThing = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> threadDelay 3000000 *> do
+  lock <- newMVar ()
+  _ <- forkIO $ fix $ \f -> do
+    threadDelay 100000
+    () <- takeMVar lock
+    Serial.recv ser 100 >>= \x -> if BSS.null x then pure () else pure () --putStrLn ("\n<Arduino> " ++ BSC.unpack x ++ "\n")
+    putMVar lock ()
+    f
+  doPrompt ser lock
+  where
+    doPrompt sp l = do
+      putStr "> "
+      go sp l
+    go sp l = do
+      putMVar l ()
+      c <- getLine
+      () <- takeMVar l
+      case c of
+        ('m':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x00,readHex' (take 2 xs)]
+          Serial.flush sp
+          doPrompt sp l
+        ('c':xs) -> do
+          _ <- Serial.send sp $ mkPkt 0x01 (take 6 xs)
+          Serial.flush sp
+          doPrompt sp l
+        ('u':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x02,readHex' (take 2 xs),readHex' (take 2 (drop 2 xs))]
+          Serial.flush sp
+          doPrompt sp l
+        ('p':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x03,readHex' (take 2 xs),readHex' (take 2 (drop 2 xs)),readHex' (take 2 (drop 4 xs)),readHex' (take 2 (drop 6 xs))]
+          Serial.flush sp
+          doPrompt sp l
+        ('f':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x04,readHex' (take 2 xs),readHex' (take 2 (drop 2 xs)),readHex' (take 2 (drop 4 xs))]
+          Serial.flush sp
+          doPrompt sp l
+        ('s':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x05,readHex' (take 2 xs)]
+          Serial.flush sp
+          doPrompt sp l
+        ('d':xs) -> do
+          _ <- Serial.send sp $ BSS.pack [0x23,0x06,readHex' (take 2 xs),readHex' (take 2 (drop 2 xs))]
+          Serial.flush sp
+          doPrompt sp l
+        "q" -> putMVar l () *> threadDelay 3000000
+        "\n" -> go sp l
+        x -> do
+          putStrLn $ "What is " ++ show x ++ "?"
+          doPrompt sp l
+
+readHex' :: String -> Word8
+readHex' x = case readHex x of {[] -> 0x00; ((a,_):_) -> a}

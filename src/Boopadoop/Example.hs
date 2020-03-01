@@ -5,9 +5,9 @@
 module Boopadoop.Example where
 
 import Boopadoop
---import Boopadoop.Ideate
 import Debug.Trace
 import Data.Semigroup
+import Data.Word
 
 theFilter :: Wavetable
 theFilter = optimizeFilter (160) $ tickTable stdtr $ bandpassFilter concertA 100
@@ -293,3 +293,11 @@ blueBossaRiff = RoseBeat
       ,(9,Beat (7 + 1))
       ]
 -}
+
+newtype DMXPacket = DMXPacket [Word8]
+
+-- | Outputs a finite TimeStream respresenting the DMX packet in microseconds
+--serializeDMX :: DMXPacket -> TimeStream Bool
+--serializeDMX (DMXPacket dataBytes) = TimeStream 100 False (TimeStream 12 True . foldr (TimeStream 4) EndStream $ [False] ++ listBits dataBytes ++ [True,True])
+  --where
+    --listBits w8 = 1 .&. fmap [0..7]

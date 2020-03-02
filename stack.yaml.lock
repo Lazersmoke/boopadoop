@@ -12,12 +12,26 @@ packages:
   original:
     hackage: WAVE-0.1.4@sha256:ce0b98c4da47520c42453edd9db22710764e2ef0d291b4ae71153016d56e72f4,1003
 - completed:
+    hackage: serialport-0.4.7@sha256:faff483f73c8e8e9661dae3788795bb0f4a38413a49fccb77bcdc6827af50182,1430
+    pantry-tree:
+      size: 762
+      sha256: 50b9cd8cc7937d91834a499171f8d0904f63381dda4d90b546fa6f16f1bec2c3
+  original:
+    hackage: serialport-0.4.7@sha256:faff483f73c8e8e9661dae3788795bb0f4a38413a49fccb77bcdc6827af50182,1430
+- completed:
     hackage: primes-0.2.1.0@sha256:94885df2e13153e439ca9c6eb1893726776ca7022128fe860278294bad49d6a9,954
     pantry-tree:
       size: 356
       sha256: faa54f923b1b9bda5038f990841b3fee1948463770ad84bf16083378675c6331
   original:
     hackage: primes-0.2.1.0
+- completed:
+    hackage: permutation-0.5.0.5@sha256:4982a4c9e2f82ec7925a098abca629d0af80e7465e4527d5fe9f4fded4cb2a53,2717
+    pantry-tree:
+      size: 1607
+      sha256: 5e92fa42f6ab70b30825f0834f0b45297356c47c0cf1c552b41c89d06ff139c7
+  original:
+    hackage: permutation-0.5.0.5
 snapshots:
 - completed:
     size: 524799

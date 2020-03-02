@@ -3,8 +3,8 @@ version:             0.0.0.2
 github:              "Lazersmoke/boopadoop"
 license:             MIT
 author:              "Sam Quinn"
-maintainer:          "lazersmoke@gmail.com"
-copyright:           "2019 Sam Quinn"
+maintainer:          "samquinn0451@gmail.com"
+copyright:           "2020 Sam Quinn"
 
 extra-source-files:
 - README.md

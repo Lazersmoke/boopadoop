@@ -1,6 +1,6 @@
 .stack-work/
 .stack-work-prof/
+out/
 Rack-SDK/
 boopadoop.cabal
 *~
-*.wav

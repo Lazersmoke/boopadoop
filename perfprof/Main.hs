@@ -31,7 +31,7 @@ main'' = do
         let ns = stretchTimeStream (1/16) sf'
         let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . (fmap . fmap) ttPFD $ ns
         wt <- newMVar ()
-        _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "lilyout.ly" ("{ " ++ toLilyPond ns ++ " }") *> listenWavestream' 90 ws *> putMVar wt ())
+        _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "out/lilyout.ly" ("{ " ++ toLilyPond ns ++ " }") *> listenWavestream' 90 ws *> putMVar wt ())
 
         startCoord <- newEmptyMVar
         ks <- newIORef False
@@ -61,7 +61,7 @@ main' = do
   _ <- forkIO $ readMVar startCoord *> putStrLn "Start Now!!!!!!!!"
   --_ <- forkIO $ readMVar startCoord *> explainNotes ks (fmap getExplanation notes)
   _playThread <- forkIO $ (takeMVar pt *> threadDelay 100 *> playWavestream startCoord ks ws *> putMVar pt ())
-  _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' (fromIntegral sideOutTime) ws *> putMVar wt ())
+  _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "out/lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' (fromIntegral sideOutTime) ws *> putMVar wt ())
   putStrLn "Now playing! Press enter to stop"
   _ <- getLine
   putStr "Waiting for sound to stop playing..."

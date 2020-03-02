@@ -166,10 +166,10 @@ wavestreamToLazyByteString :: [Discrete] -> BSL.ByteString
 wavestreamToLazyByteString xs = BSL.fromChunks $ chunkSamples xs stdtr
 
 listenUnboundedWavestream :: [Discrete] -> IO ()
-listenUnboundedWavestream ws = WAVE.putWAVEFile "listen.wav" . wavestreamToWAVE (length ws) stdtr $ ws
+listenUnboundedWavestream ws = WAVE.putWAVEFile "out/listen.wav" . wavestreamToWAVE (length ws) stdtr $ ws
 
 listenWavestream' :: Double -> [Discrete] -> IO ()
-listenWavestream' t w = WAVE.putWAVEFile "listen.wav" (wavestreamToWAVE (floor $ stdtr * t) stdtr w)
+listenWavestream' t w = WAVE.putWAVEFile "out/listen.wav" (wavestreamToWAVE (floor $ stdtr * t) stdtr w)
 
 listenWavestream :: [Discrete] -> IO ()
 listenWavestream = listenWavestream' 5
@@ -226,7 +226,7 @@ dumpFiniteWavestreamToScatter = writeFile "scatter" . unlines . outS (0 :: Int)
     entryFor t x = show t ++ " " ++ show x
 
 solFeckToLilyPond :: Octaved TwelveTone -> String -> IO ()
-solFeckToLilyPond cRel = writeFile "lilyout.ly" . (\s -> "{ " ++ s ++ " }") . toLilyPond . (fmap . fmap) (<> cRel) . stretchTimeStream (1/8) . solFeck
+solFeckToLilyPond cRel = writeFile "out/lilyout.ly" . (\s -> "{ " ++ s ++ " }") . toLilyPond . (fmap . fmap) (<> cRel) . stretchTimeStream (1/8) . solFeck
 
 toLilyPond :: TimeStream (Maybe (Octaved TwelveTone)) -> String
 toLilyPond (TimeStream t mx xs) = case mx of
@@ -295,7 +295,7 @@ sendArduinoTimeStream ts = Serial.withSerial "COM3" Serial.defaultSerialSettings
       _ <- Serial.send sp x
       _ <- Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
       --Serial.flush sp
-      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t)
+      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t :: [Word8])
       threadDelay (floor $ t * 1000000)
       go xs sp
     go EndStream _ = pure ()

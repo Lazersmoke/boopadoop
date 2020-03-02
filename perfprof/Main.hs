@@ -15,7 +15,7 @@ import Data.IORef
 import Debug.Trace
 
 main :: IO ()
-main = playArdSolfeck "0'''''''''........." -- main''
+main = main''
 
 main'' :: IO ()
 main'' = do
@@ -59,7 +59,7 @@ main' = do
   wt <- newMVar ()
   startCoord <- newEmptyMVar
   _ <- forkIO $ readMVar startCoord *> putStrLn "Start Now!!!!!!!!"
-  _ <- forkIO $ readMVar startCoord *> explainNotes ks (fmap getExplanation notes)
+  --_ <- forkIO $ readMVar startCoord *> explainNotes ks (fmap getExplanation notes)
   _playThread <- forkIO $ (takeMVar pt *> threadDelay 100 *> playWavestream startCoord ks ws *> putMVar pt ())
   _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' (fromIntegral sideOutTime) ws *> putMVar wt ())
   putStrLn "Now playing! Press enter to stop"

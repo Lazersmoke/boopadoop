@@ -8,12 +8,11 @@ import Boopadoop.Ideate
 import qualified Data.WAVE as WAVE
 import Foreign.C
 import Foreign.Ptr
-import Foreign.ForeignPtr
+import Foreign.Marshal.Array
+import Foreign.Storable
 import qualified Data.ByteString as BSS
-import qualified Data.ByteString.Internal as BSI
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Builder as BSB
-import qualified Data.ByteString.Char8 as BSC
 import Data.IORef
 import Data.Word
 import Data.Function
@@ -22,16 +21,19 @@ import Numeric
 
 import qualified System.Hardware.Serialport as Serial
 
-foreign import ccall "cstuff.cpp PlayAudioStream" c_PlayAudioStream :: FunPtr AudioSourceCallback -> FunPtr StartCoordCallback -> IO ()
-foreign import ccall "cstuff.cpp &sinWaveLDC" sinWaveLDC :: FunPtr AudioSourceCallback
-foreign import ccall "cstuff.cpp hask_sleep" c_sleep :: CUInt -> IO ()
+data AudioClient
 
-type AudioSourceCallback = CUInt -> Ptr Float -> Ptr () -> IO (Ptr ())
+foreign import ccall "cstuff.cpp c_PlayAudioStream" c_PlayAudioStream :: Ptr AudioClient -> FunPtr AudioSourceCallback -> FunPtr StartCoordCallback -> IO ()
+foreign import ccall "cstuff.cpp c_InitAudio" c_InitAudio :: IO (Ptr AudioClient)
+foreign import ccall "cstuff.cpp c_ReleaseAudio" c_ReleaseAudio :: Ptr AudioClient -> IO ()
+
+type AudioSourceCallback = CUInt -> Ptr BiFloat -> Ptr CUInt -> IO ()
 foreign import ccall "wrapper" mkAudioSourceCallback :: AudioSourceCallback -> IO (FunPtr AudioSourceCallback)
 
 type StartCoordCallback = CULong -> IO ()
 foreign import ccall "wrapper" mkSCCB :: StartCoordCallback -> IO (FunPtr StartCoordCallback)
 
+{-
 wavestreamAudioCallback :: IORef Bool -> [Discrete] -> AudioSourceCallback
 wavestreamAudioCallback killSwitch ws size ptr _flagsPtr = do
   let (out,rest) = splitAt (fromIntegral size) ws
@@ -50,20 +52,77 @@ wavestreamAudioCallback killSwitch ws size ptr _flagsPtr = do
   where
     packFloat = replicate numChannels . BSB.floatLE . realToFrac . discreteToDouble
     numChannels = 2
-{-
-wavestreamAudioSource :: MVar BSL.ByteString -> AudioSourceCallback
-wavestreamAudioSource outBytes size ptr _flagsPtr = do
-  --putStrLn "Data callback called!"
-  --putStrLn $ "Data pointer:" ++ show ptr
-  --putStrLn $ "Flags pointer:" ++ show flagsPtr
-  samplesToBuffer <- modifyMVar outBytes $ \k -> pure $ let (out,rest) = BSL.splitAt (fromIntegral size) k in {-trace ("Now buffering: " ++ show (BSL.length out)) $ -}if BSL.null out then (rest,Nothing) else (rest,Just out)
-  ret <- case samplesToBuffer of
-    Nothing -> pure 1
-    Just out -> let (fp,_,l) = BSI.toForeignPtr (BSL.toStrict out) in withForeignPtr fp $ \xx -> BSI.memcpy (castPtr ptr) (castPtr xx) (4 * l) *> pure 0
-  --putStrLn "Done putting data"
-  pure ret
 -}
-forceStreamEval :: Int -> [Discrete] -> [Discrete]
+
+writeToOutputBuffer :: Storable a => [a] -> MVar (OutputBuffer a) -> IORef Bool -> IO ()
+writeToOutputBuffer [] _ _ = pure ()
+writeToOutputBuffer fs mob ks = do
+  --fs <- readMVar mob >>= \obr -> pure $ forceStreamEval (outBufferSize obr) fs'
+  doDie <- readIORef ks
+  if doDie
+    then pure ()
+    else do
+      ob <- takeMVar mob
+      let bufSpace = spaceInBuffer ob
+      if bufSpace > 0
+        then do
+          let (fsWrite,rest) = splitAt bufSpace fs
+          pokeArray (advancePtr (outBufferPtr ob) (outBufferWriteOffset ob)) fsWrite
+          putMVar mob ob {outBufferWriteOffset = outBufferWriteOffset ob + length fsWrite}
+          writeToOutputBuffer rest mob ks
+        else putMVar mob ob *> putStrLn "Blocking on write!" *> threadDelay 10000 *> writeToOutputBuffer fs mob ks
+
+yeetFromOutputBuffer :: Storable a => Int -> MVar (OutputBuffer a) -> Ptr a -> IO ()
+yeetFromOutputBuffer 0 _ _ = pure ()
+yeetFromOutputBuffer reqSamps mob ptr = do
+  ob <- takeMVar mob
+  let sampsAvail = outBufferWriteOffset ob
+  if sampsAvail < reqSamps
+    then if reqSamps > outBufferSize ob
+      then reallocArray (outBufferPtr ob) reqSamps >>= \obp' -> putMVar mob ob {outBufferPtr = obp', outBufferSize = reqSamps} *> putStrLn ("Resized out buffer to " ++ show reqSamps ++ "!") *> yeetFromOutputBuffer reqSamps mob ptr
+      else putMVar mob ob *> putStrLn "Bytes weren't ready to be read from output buffer in time!" *> threadDelay 10000 *> yeetFromOutputBuffer reqSamps mob ptr
+    else do
+      let newOutInd = sampsAvail - reqSamps
+      copyArray ptr (outBufferPtr ob) reqSamps
+      moveArray (outBufferPtr ob) (advancePtr (outBufferPtr ob) reqSamps) newOutInd -- TODO: Ring buffer so this is fast again
+      putMVar mob ob {outBufferWriteOffset = newOutInd}
+
+spaceInBuffer :: OutputBuffer a -> Int
+spaceInBuffer ob = outBufferSize ob - outBufferWriteOffset ob
+
+bufferedAudioCallback :: MVar (OutputBuffer BiFloat) -> IORef Bool -> AudioSourceCallback
+bufferedAudioCallback mob ks bytes ptr flagsPtr = do
+  doDie <- readIORef ks
+  if doDie
+    then poke flagsPtr 0x02 -- kill flag
+    else yeetFromOutputBuffer (fromIntegral bytes) mob ptr
+
+mkOutputBuffer :: Storable a => Int -> IO (OutputBuffer a)
+mkOutputBuffer initSize = do
+  p <- mallocArray initSize
+  pure $ OutputBuffer {outBufferPtr = p, outBufferWriteOffset = 0, outBufferSize = initSize}
+
+data BiFloat = BiFloat !Float !Float deriving (Eq,Show)
+instance Storable BiFloat where
+  sizeOf _ = sizeOf @Float undefined + sizeOf @Float undefined
+  alignment _ = alignment @Float undefined
+  peek ptr = BiFloat <$> peek (castPtr ptr) <*> peekElemOff (castPtr ptr) 1
+  poke ptr (BiFloat a b) = poke (castPtr ptr) a *> pokeElemOff (castPtr ptr) 1 b
+
+data OutputBuffer a = OutputBuffer
+  {outBufferPtr :: Ptr a
+  ,outBufferWriteOffset :: Int
+  ,outBufferSize :: Int
+  }
+{-
+data WaveStreamIO a = ConsIO a (IO (WaveStreamIO a))
+
+pullFromIOStream :: Int -> WaveStreamIO a -> IO ([a],WaveStreamIO a)
+pullFromIOStream 0 s = pure ([],s)
+pullFromIOStream !k (ConsIO a s') = (\(xs,s) -> (a:xs,s)) <$> pullFromIOStream (k - 1) s'
+-}
+
+forceStreamEval :: Int -> [a] -> [a]
 forceStreamEval _ [] = []
 forceStreamEval 0 xs = xs
 forceStreamEval !i (x:xs) = x `seq` (x : forceStreamEval (i-1) xs)
@@ -78,9 +137,15 @@ playWavestreamBlockUntilStart ws = do
 
 playWavestream :: MVar () -> IORef Bool -> [Discrete] -> IO ()
 playWavestream startCoord ks ws = do
-  cb <- mkAudioSourceCallback (wavestreamAudioCallback ks ws)
+  mob <- newMVar =<< mkOutputBuffer 0
+  _ <- forkIO $ writeToOutputBuffer (fmap packFloat ws) mob ks
+  cb <- mkAudioSourceCallback (bufferedAudioCallback mob ks)
   sccb <- mkSCCB $ (\_ -> forkIO (putMVar startCoord ()) *> pure ())
-  c_PlayAudioStream cb sccb *> freeHaskellFunPtr cb *> freeHaskellFunPtr sccb
+  ac <- c_InitAudio
+  c_PlayAudioStream ac cb sccb *> freeHaskellFunPtr cb *> freeHaskellFunPtr sccb
+  c_ReleaseAudio ac
+  where
+    packFloat = (\x -> BiFloat x x) . realToFrac . discreteToDouble
 
 explainNotes :: IORef Bool -> TimeStream String -> IO ()
 explainNotes _ EndStream = pure ()
@@ -133,7 +198,7 @@ makeWavestreamTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStre
 makeWavestreamTimeStreamTimbreKey k timbre = timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
   where
     tempo :: Int
-    tempo = floor @Double (stdtr / 1.5)
+    tempo = floor @Double stdtr
 
 listenTimeStreamFollow :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamFollow k timbre ts = listenUnboundedWavestream . meshWavestreams . fmap timbre . followValue' stdtr 0.5 . stepCompose (8/stdtr) . (fmap . fmap) (flip intervalOf k) $ ts
@@ -211,6 +276,7 @@ ttArdPacket (Just tt) = mkPkt 0x01 $ case getTTNum tt of
   1 -> "2D882D"
   6 -> "88CC88"
   11 -> "55AA55"
+  _ -> "000000"
 
 solFeckArd :: String -> TimeStream BSS.ByteString
 solFeckArd = stretchTimeStream 0.25 . TimeStream 0 (mkPkt 0x00 "01" {-"01"-}) . fmap (ttArdPacket . fmap getPitchClass) . solFeck
@@ -218,44 +284,44 @@ solFeckArd = stretchTimeStream 0.25 . TimeStream 0 (mkPkt 0x00 "01" {-"01"-}) . 
 sendArduinoTimeStream :: TimeStream BSS.ByteString -> IO ()
 sendArduinoTimeStream ts = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> do
   threadDelay 3000000
-  Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
+  _ <- Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
   --forkIO $ Serial.recv sp 1 >>= print
   go (TimeStream 3 (BSS.empty) ts) ser
-  Serial.send ser (BSS.pack [0x23,0x00,0x00])
+  _ <- Serial.send ser (BSS.pack [0x23,0x00,0x00])
   putStrLn "Done!"
   threadDelay 3000000
   where
     go (TimeStream t x xs) sp = do
-      Serial.send sp x
-      Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
+      _ <- Serial.send sp x
+      _ <- Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
       --Serial.flush sp
       putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t)
       threadDelay (floor $ t * 1000000)
       go xs sp
     go EndStream _ = pure ()
-    timeToBytes time = let millis = floor (time * 1000) in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
+    timeToBytes time = let millis = floor (time * 1000) :: Int in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
 
 playArdSolfeck :: String -> IO ()
 playArdSolfeck sol = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> do
   threadDelay 3000000
-  Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
+  _ <- Serial.send ser (BSS.pack [0x23,0x01,0x00,0x00,0x00])
   --forkIO $ Serial.recv sp 1 >>= print
   let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . (fmap . fmap) ttPFD $ solFeck sol
   playWavestreamBlockUntilStart ws
   go (solFeckArd sol) ser
-  Serial.send ser (BSS.pack [0x23,0x00,0x00])
+  _ <- Serial.send ser (BSS.pack [0x23,0x00,0x00])
   putStrLn "Done!"
   threadDelay 3000000
   where
     go (TimeStream t x xs) sp = do
-      Serial.send sp x
-      Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
+      _ <- Serial.send sp x
+      _ <- Serial.send sp (BSS.pack (concat [[0x23,0x06],timeToBytes t]))
       --Serial.flush sp
-      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t)
+      putStrLn $ "Sent " ++ show x ++ " with time " ++ show (timeToBytes t :: [Word8])
       threadDelay (floor $ t * 1000000)
       go xs sp
     go _ _ = pure ()
-    timeToBytes time = let millis = floor (time * 1000) in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
+    timeToBytes time = let millis = floor (time * 1000) :: Word16 in [fromIntegral (millis `div` 0xff),fromIntegral (millis `mod` 0xff)]
 
 eqTimbre :: Double -> Wavetable
 eqTimbre = synthFromDiscreteProfile . harmonicEquationToDiscreteProfile (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))

@@ -3,8 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TupleSections #-}
--- | Representing rhythms as step functions of rational time
-module Boopadoop.Rhythm where
+module Boopadoop.TimeStream where
 
 import Control.Monad
 

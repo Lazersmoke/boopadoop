@@ -11,7 +11,7 @@ import Data.List
 import qualified Data.Set as Set
 import Data.Numbers.Primes
 import Data.Align (salign)
-import Boopadoop.Rhythm (SummaryChar(sumUp))
+import Boopadoop.TimeStream (SummaryChar(sumUp))
 
 -- | Represents a note in an arbitrary twelve-toned scale.
 newtype TwelveTone = MkTwelveTone 
@@ -207,23 +207,6 @@ rawPFDRatio = product . zipWith (^^) (map fromIntegral (drop 1 $ primes @Int)) .
 ratioBetween :: Fractional a => PitchFactorDiagram -> PitchFactorDiagram -> a
 ratioBetween a b = diagramToRatio a / diagramToRatio b
 
--- | Similar to 'diagramToRatio', but simplifies the resulting ratio to the simplest ratio within @0.05@.
---diagramToFloatyRatio :: PitchFactorDiagram -> Rational
---diagramToFloatyRatio = flip approxRational 0.05 . diagramToRatio @Double
-
--- | Convert a PFD to its decimal number of semitones. Useful for approximating weird ratios in a twelvetone scale:
--- @
---  diagramToSemi (normalizePFD $ Factors [0,0,0,1]) = diagramToSemi (countPFD (7/4)) = 9.688259064691248
--- @
---diagramToSemi :: Floating a => PitchFactorDiagram -> a
---diagramToSemi = (12 *) . logBase 2 . diagramToRatio
-
--- | Normalize a PFD by raising or lowering it by octaves until its ratio lies between @1@ (unison) and @2@ (one octave up).
--- This operation is idempotent.
---normalizePFD :: PitchFactorDiagram -> PitchFactorDiagram
---normalizePFD (Factors []) = Factors []
---normalizePFD (Factors (_:xs)) = Factors $ (negate . floor . logBase 2 . diagramToRatio @Double . Factors . (0:) $ xs) : xs
-
 -- | Gets the octave that the pitch factor diagram would be in if we didn't normalize it back to [1,2)
 getPFDNativeOctave :: PitchFactorDiagram -> Int
 getPFDNativeOctave = floor . logBase 2 . rawPFDRatio @Double
@@ -303,38 +286,14 @@ invChrd :: (Monoid a,Ord a) => Int -> ChordVoicing a -> ChordVoicing a
 invChrd 0 c = c
 invChrd k (Chord c) = let (p,c') = Set.deleteFindMin c in invChrd (k-1) (Chord $ Set.insert (shiftOctave 1 p) c')
 
-{-
-voiceChord :: [Int] -> Chord -> Chord
-voiceChord voicing c = if maximum voicing < chordSize c
-  then let ps = Set.toList (getNotes c) in Chord . foldl z Set.empty . map (\k -> ps !! k) $ voicing
-  else error $ "voiceChord " ++ show voicing ++ " called on chord " ++ show c ++ " of size " ++ show (chordSize c)
-  where
-    z s p = if (\m -> case m of {Just _ -> True; Nothing -> False}) (Set.lookupGE p s) then z s (addPFD (Factors [1]) p) else Set.insert p s
--}
-
 chordRoot :: Ord a => Chord a -> a
 chordRoot = Set.findMin . getVoices
-{-
-closedFPH :: Int -> Chord -> Chord
-closedFPH = closedFPHOver 0
 
-closedFPHOver :: Int -> Int -> Chord -> Chord
-closedFPHOver bass ov c = if chordSize c >= 3
-  then voiceChord [bass,ov,(ov + 1) `mod` 3, (ov + 2) `mod` 3] c
-  else error $ "closedFPHOver chord of size " ++ show (chordSize c)
--}
 instance Show a => Show (Chord a) where
   show c = "<" ++ (init . tail . show . getVoiceList $ c) ++ ">"
 
 prettyShowChord :: Show a => Chord a -> String
 prettyShowChord (Chord c) = init . unlines $ ["/="] ++ fmap show (Set.toList c) ++ ["\\="]
-
-consonantHalfway :: PitchFactorDiagram -> PitchFactorDiagram -> PitchFactorDiagram
-consonantHalfway x y = countPFDFuzzy $ num/denom
-  where
-    num = diagramToRatio y - diagramToRatio x
-    --denom = sum $ zipWith (\a b -> fromIntegral a * log (fromIntegral b)) (zipWith (-) (getFactors y) (getFactors x ++ repeat 0)) primes
-    denom = log $ diagramToRatio $ addPFD y (invertPFD x)
 
 chordCeil :: Ord a => Octaved a -> Chord a -> Octaved a
 chordCeil p c = let (_l,g) = Set.split pc (getVoices c) in case Set.lookupMin g of

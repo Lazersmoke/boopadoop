@@ -11,13 +11,9 @@ import GHC.Generics
 import Data.Aeson
 import Data.Text(Text)
 import Data.Foldable
-import Data.Word
-import Control.Monad
 
 import Foreign.C
 import Foreign.Ptr
---import Foreign.ForeignPtr
-import Foreign.Storable
 
 {-
 modules": [
@@ -112,3 +108,5 @@ data Module = Module
 
 instance ToJSON Module where
 instance FromJSON Module where
+
+

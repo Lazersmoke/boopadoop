@@ -1,0 +1,33 @@
+<html>
+  <head>
+  <script>
+
+function controlPacket(knob,val){
+  var buffer = new ArrayBuffer(8);
+  var view = new DataView(buffer,0,8); 
+  view.setUint32(0,knob);
+  view.setUint32(1,val);
+  return buffer;
+}
+
+function clicked(){
+  socket.send(controlPacket(15,18));
+}
+// Create WebSocket connection.
+const socket = new WebSocket('ws://localhost:8080');
+
+// Connection opened
+socket.addEventListener('open', function (event) {
+    socket.send('Hello Server!');
+});
+
+// Listen for messages
+socket.addEventListener('message', function (event) {
+    console.log('Message from server ', event.data);
+});
+  </script>
+  </head>
+  <body>
+    <button onClick="clicked()">Click</button>
+  </body>
+</html>

@@ -8,7 +8,7 @@
 module Boopadoop 
   (module Boopadoop
   ,module Boopadoop.Diagram
-  ,module Boopadoop.Rhythm
+  ,module Boopadoop.TimeStream
   ,module Boopadoop.Interval
   ,module Boopadoop.Discrete
   ) where
@@ -18,7 +18,7 @@ import Control.Monad.ST
 import Control.Monad
 import Control.Applicative
 import Boopadoop.Diagram
-import Boopadoop.Rhythm
+import Boopadoop.TimeStream
 import Boopadoop.Interval
 import Boopadoop.Discrete
 import Data.List
@@ -678,3 +678,6 @@ fft xs = zipWith (+) ys ts ++ zipWith (-) ys ts
           ts = zipWith (\z k -> exp' k n * z) zs [0..]
           exp' :: Int -> Int -> Complex Double
           exp' k a = cis $ -2 * pi * (fromIntegral k) / (fromIntegral a)
+
+delayLine :: Monoid a => Int -> [a] -> [a]
+delayLine k xs = replicate k mempty ++ xs

@@ -1,18 +1,16 @@
 {-# LANGUAGE BangPatterns #-}
 module Main where
 
-import Boopadoop.Example
 import Boopadoop
 import Boopadoop.Plot
 import Boopadoop.Ideate
-import Boopadoop.Rack
+import Boopadoop.Interface
 
 import System.Random
 import System.IO
 import Control.Concurrent.MVar
 import Control.Concurrent
 import Data.IORef
-import Debug.Trace
 
 main :: IO ()
 main = main''
@@ -36,7 +34,7 @@ main'' = do
         startCoord <- newEmptyMVar
         ks <- newIORef False
         pt <- newMVar ()
-        _playThread <- forkIO $ (takeMVar pt *> playWavestream startCoord ks ws *> putMVar pt ())
+        _playThread <- forkIO $ (takeMVar pt *> playWavestream startCoord ks (playByWriting ws) *> putMVar pt ())
         do
           putStrLn "Now playing! Press enter to stop"
           _ <- getLine
@@ -46,7 +44,6 @@ main'' = do
         _ <- takeMVar pt
         _ <- takeMVar wt
         putStrLn "Goodbye."
-
 
 main' :: IO ()
 main' = do
@@ -60,7 +57,7 @@ main' = do
   startCoord <- newEmptyMVar
   _ <- forkIO $ readMVar startCoord *> putStrLn "Start Now!!!!!!!!"
   --_ <- forkIO $ readMVar startCoord *> explainNotes ks (fmap getExplanation notes)
-  _playThread <- forkIO $ (takeMVar pt *> threadDelay 100 *> playWavestream startCoord ks ws *> putMVar pt ())
+  _playThread <- forkIO $ (takeMVar pt *> threadDelay 100 *> playWavestream startCoord ks (playByWriting ws) *> putMVar pt ())
   _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "out/lilyout.ly" ("{ " ++ toLilyPond noteStream ++ " }") *> listenWavestream' (fromIntegral sideOutTime) ws *> putMVar wt ())
   putStrLn "Now playing! Press enter to stop"
   _ <- getLine

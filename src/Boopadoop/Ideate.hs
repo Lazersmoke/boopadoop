@@ -249,14 +249,15 @@ ruledSeededPlaying :: Show (Octaved a) => TimeStream () -> [CompositionRule a (T
 ruledSeededPlaying rhythmSeed rhythmRules pitchRules pc0 = let (WithExplanation _whyLastPitch (pc',_pitchLast),ts) = branchAfterEndStream (addPhrasingExpl $ go pc0 {randomGen = r'} phrase) (ruledSeededPlaying EndStream rhythmRules pitchRules pc') in ts
   where
     go !pc (TimeStream t () xs) = let (WithExplanation whyPitch p,r'') = selectRule pc pitchRules in let pcAfter = pc {playingHistory = TimeStream t p $ playingHistory pc, randomGen = r''} in TimeStream t (WithExplanation ("Pitch " ++ show p ++ " because " ++ whyPitch) (pcAfter,p)) (go pcAfter xs)
-    go !pc EndStream = EndStream
-    addPhrasingExpl = fmap (\(WithExplanation exp x) -> WithExplanation (exp ++ "\n  with phrasing: " ++ whyPhrase ++ "\n") x)
+    go !_ EndStream = EndStream
+    addPhrasingExpl = fmap (\(WithExplanation expl x) -> WithExplanation (expl ++ "\n  with phrasing: " ++ whyPhrase ++ "\n") x)
     (WithExplanation whyPhrase phrase,r') = case rhythmSeed of
       EndStream -> selectRule pc0 rhythmRules
       ts -> (WithExplanation "Seeded" ts,randomGen pc0)
 
 stepChangeContext :: PlayingContext a -> TimeStream (PlayingContext a -> PlayingContext a) -> (PlayingContext a -> TimeStream (WithExplanation (PlayingContext a,b))) -> TimeStream (WithExplanation (PlayingContext a,b))
 stepChangeContext !pc0 (TimeStream t change changes) f = let (WithExplanation _whyLastPitch (pc',_pitchLast), ts) = branchAfterTimeStream t (f (change pc0)) (stepChangeContext pc' changes f) in ts
+stepChangeContext _ EndStream _ = EndStream
 
 newtype CompositionRule b a = CompositionRule {triggerApply :: PlayingContext b -> Maybe (WithExplanation a)}
 
@@ -367,19 +368,19 @@ allTimingRules =
   ]
 
 wholeNote :: CompositionRule a (TimeStream ())
-wholeNote = CompositionRule $ \ctx -> Just (WithExplanation "Whole note" (TimeStream 1 () EndStream))
+wholeNote = CompositionRule $ \_ -> Just (WithExplanation "Whole note" (TimeStream 1 () EndStream))
 
 halfNote :: CompositionRule a (TimeStream ())
-halfNote = CompositionRule $ \ctx -> Just (WithExplanation "Half note" (TimeStream 0.5 () EndStream))
+halfNote = CompositionRule $ \_ -> Just (WithExplanation "Half note" (TimeStream 0.5 () EndStream))
 
 quarterNotes :: CompositionRule a (TimeStream ())
-quarterNotes = CompositionRule $ \ctx -> Just (WithExplanation "Quarter note" (TimeStream 0.25 () EndStream))
+quarterNotes = CompositionRule $ \_ -> Just (WithExplanation "Quarter note" (TimeStream 0.25 () EndStream))
 
 eightNotes :: CompositionRule a (TimeStream ())
-eightNotes = CompositionRule $ \ctx -> Just (WithExplanation "Eights note" (TimeStream 0.125 () (TimeStream 0.125 () EndStream)))
+eightNotes = CompositionRule $ \_ -> Just (WithExplanation "Eights note" (TimeStream 0.125 () (TimeStream 0.125 () EndStream)))
 
 sixteenths :: CompositionRule a (TimeStream ())
-sixteenths = CompositionRule $ \ctx -> Just (WithExplanation "Sixteenths note" (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () EndStream)))))
+sixteenths = CompositionRule $ \_ -> Just (WithExplanation "Sixteenths note" (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () (TimeStream 0.0625 () EndStream)))))
 
 lastInterval :: TimeStream a -> Maybe (a,a)
 lastInterval (TimeStream _ x (TimeStream _ y _)) = Just (y,x)

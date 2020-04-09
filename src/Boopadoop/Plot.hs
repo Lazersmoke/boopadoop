@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 module Boopadoop.Plot where
@@ -11,8 +12,6 @@ import Foreign.Ptr
 import Foreign.Marshal.Array
 import Foreign.Storable
 import qualified Data.ByteString as BSS
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Builder as BSB
 import Data.IORef
 import Data.Word
 import Data.Function
@@ -33,31 +32,56 @@ foreign import ccall "wrapper" mkAudioSourceCallback :: AudioSourceCallback -> I
 type StartCoordCallback = CULong -> IO ()
 foreign import ccall "wrapper" mkSCCB :: StartCoordCallback -> IO (FunPtr StartCoordCallback)
 
-{-
-wavestreamAudioCallback :: IORef Bool -> [Discrete] -> AudioSourceCallback
-wavestreamAudioCallback killSwitch ws size ptr _flagsPtr = do
-  let (out,rest) = splitAt (fromIntegral size) ws
-  doDie <- readIORef killSwitch
-  --putStrLn $ "doDie = " ++ show doDie
-  --putStrLn $ "null out = " ++ show (null out)
-  if null out || doDie
-    then pure nullPtr
-    else do
-      --_ <- forkIO $ let x = forceStreamEval (fromIntegral size) rest `seq` () in x `seq` pure x
-      let (fp,_,l) = BSI.toForeignPtr . BSL.toStrict . BSB.toLazyByteString . foldl mappend mempty . concatMap packFloat $ out
-      --putStrLn "About to memcpy!"
-      _ <- withForeignPtr fp $ \xx -> BSI.memcpy (castPtr ptr) (castPtr xx) l *> pure (0 :: Int)
-      --putStrLn "About to cast!"
-      pure . castFunPtrToPtr =<< mkAudioSourceCallback (wavestreamAudioCallback killSwitch rest)
-  where
-    packFloat = replicate numChannels . BSB.floatLE . realToFrac . discreteToDouble
-    numChannels = 2
--}
 
+dependOnParameters :: MVar a -> (a -> b -> c) -> [b] -> IO (IOLacedStream c)
+dependOnParameters _ _ [] = error "empty stream depend on paramters"
+dependOnParameters ma f (b:bs) = do
+  a <- readMVar ma
+  pure $ IOLacedStream (f a b) (dependOnParameters ma f bs)
+
+streamToList :: IOLacedStream a -> IO [a]
+streamToList (IOLacedStream a s) = (a:) <$> (s >>= streamToList)
+
+listToStream :: [a] -> IOLacedStream a
+listToStream (x:xs) = IOLacedStream x (pure $ listToStream xs)
+
+example :: IOLacedStream Double -> IO (IOLacedStream BiFloat)
+example ios = do
+  fs <- streamToList ios
+  let xs = emuVCO' fs (fmap packFloat . discretize $ sinWave 440)
+  pure $ listToStream xs
+
+delayStream :: IOLacedStream Char
+delayStream = IOLacedStream 'a' (threadDelay 1000000 *> pure (IOLacedStream 'b' (pure delayStream)))
+
+data IOLacedStream a = IOLacedStream a (IO (IOLacedStream a)) deriving Functor
+
+fastForwardIOLaced :: Int -> IOLacedStream a -> IO ([a],IOLacedStream a)
+fastForwardIOLaced 0 s = pure ([],s)
+fastForwardIOLaced !k (IOLacedStream a s) = s >>= \next -> fastForwardIOLaced (k - 1) next >>= \(xs,s') -> pure (a:xs,s')
+
+
+writeIOLaced :: Storable a => IOLacedStream a -> MVar (OutputBuffer a) -> IORef Bool -> IO ()
+writeIOLaced ios mob ks = do
+  doDie <- readIORef ks
+  if doDie
+    then pure ()
+    else do
+      ob <- takeMVar mob
+      let bufSpace = spaceInBuffer ob
+      if bufSpace > 0
+        then do
+          (fsWrite,rest) <- fastForwardIOLaced bufSpace ios
+          pokeArray (advancePtr (outBufferPtr ob) (outBufferWriteOffset ob)) fsWrite
+          putMVar mob ob {outBufferWriteOffset = outBufferWriteOffset ob + length fsWrite}
+          writeIOLaced rest mob ks
+        else putMVar mob ob *> threadDelay 10000 *> writeIOLaced ios mob ks
+
+
+-- | Continuously keep the buffer supplied with values from the list, blocking until all values have been written
 writeToOutputBuffer :: Storable a => [a] -> MVar (OutputBuffer a) -> IORef Bool -> IO ()
 writeToOutputBuffer [] _ _ = pure ()
 writeToOutputBuffer fs mob ks = do
-  --fs <- readMVar mob >>= \obr -> pure $ forceStreamEval (outBufferSize obr) fs'
   doDie <- readIORef ks
   if doDie
     then pure ()
@@ -70,8 +94,10 @@ writeToOutputBuffer fs mob ks = do
           pokeArray (advancePtr (outBufferPtr ob) (outBufferWriteOffset ob)) fsWrite
           putMVar mob ob {outBufferWriteOffset = outBufferWriteOffset ob + length fsWrite}
           writeToOutputBuffer rest mob ks
-        else putMVar mob ob *> putStrLn "Blocking on write!" *> threadDelay 10000 *> writeToOutputBuffer fs mob ks
+        else putMVar mob ob *> threadDelay 10000 *> writeToOutputBuffer fs mob ks
 
+-- | Copy exactly the specified number of values from the output buffer to the pointer, blocking until that many values are available.
+-- If the requested amount is bigger than the buffer size, resize the buffer so more values can be written at once.
 yeetFromOutputBuffer :: Storable a => Int -> MVar (OutputBuffer a) -> Ptr a -> IO ()
 yeetFromOutputBuffer 0 _ _ = pure ()
 yeetFromOutputBuffer reqSamps mob ptr = do
@@ -87,9 +113,11 @@ yeetFromOutputBuffer reqSamps mob ptr = do
       moveArray (outBufferPtr ob) (advancePtr (outBufferPtr ob) reqSamps) newOutInd -- TODO: Ring buffer so this is fast again
       putMVar mob ob {outBufferWriteOffset = newOutInd}
 
+-- | Empty, writable space remaining in a buffer
 spaceInBuffer :: OutputBuffer a -> Int
 spaceInBuffer ob = outBufferSize ob - outBufferWriteOffset ob
 
+-- | 'AudioSourceCallback' using 'yeetFromOutputBuffer'
 bufferedAudioCallback :: MVar (OutputBuffer BiFloat) -> IORef Bool -> AudioSourceCallback
 bufferedAudioCallback mob ks bytes ptr flagsPtr = do
   doDie <- readIORef ks
@@ -97,56 +125,68 @@ bufferedAudioCallback mob ks bytes ptr flagsPtr = do
     then poke flagsPtr 0x02 -- kill flag
     else yeetFromOutputBuffer (fromIntegral bytes) mob ptr
 
+-- | Create an output buffer with an initial size.
+-- Doing @'mkOutputBuffer' 0@ is reasonable in conjunction with 'yeetFromOutputBuffer' because it will be resized as needed.
 mkOutputBuffer :: Storable a => Int -> IO (OutputBuffer a)
 mkOutputBuffer initSize = do
   p <- mallocArray initSize
   pure $ OutputBuffer {outBufferPtr = p, outBufferWriteOffset = 0, outBufferSize = initSize}
 
+-- | Two float values packed together (left and right channel)
 data BiFloat = BiFloat !Float !Float deriving (Eq,Show)
+
+-- | Right next to each other, in order
 instance Storable BiFloat where
   sizeOf _ = sizeOf @Float undefined + sizeOf @Float undefined
   alignment _ = alignment @Float undefined
   peek ptr = BiFloat <$> peek (castPtr ptr) <*> peekElemOff (castPtr ptr) 1
   poke ptr (BiFloat a b) = poke (castPtr ptr) a *> pokeElemOff (castPtr ptr) 1 b
 
+-- | A storable array with a write index.
+-- Roll your own thread safety using @'Mvar'@
 data OutputBuffer a = OutputBuffer
   {outBufferPtr :: Ptr a
   ,outBufferWriteOffset :: Int
   ,outBufferSize :: Int
   }
-{-
-data WaveStreamIO a = ConsIO a (IO (WaveStreamIO a))
-
-pullFromIOStream :: Int -> WaveStreamIO a -> IO ([a],WaveStreamIO a)
-pullFromIOStream 0 s = pure ([],s)
-pullFromIOStream !k (ConsIO a s') = (\(xs,s) -> (a:xs,s)) <$> pullFromIOStream (k - 1) s'
--}
 
 forceStreamEval :: Int -> [a] -> [a]
 forceStreamEval _ [] = []
 forceStreamEval 0 xs = xs
 forceStreamEval !i (x:xs) = x `seq` (x : forceStreamEval (i-1) xs)
 
+-- | Play the wavestream, blocking until the playback starts, then returning
 playWavestreamBlockUntilStart :: [Discrete] -> IO ()
 playWavestreamBlockUntilStart ws = do
   sc <- newEmptyMVar
   ks <- newIORef False
-  _ <- forkIO $ playWavestream sc ks ws
+  _ <- forkIO $ playWavestream sc ks (playByWriting ws)
   () <- takeMVar sc
   pure ()
 
-playWavestream :: MVar () -> IORef Bool -> [Discrete] -> IO ()
-playWavestream startCoord ks ws = do
+-- | Play the wavestream, blocking until the stream ends.
+-- Will fill the supplied @'MVar'@ as soon as playback begins.
+-- Setting the @'IORef'@ to @'True'@ will tell the playback to terminate early (useful with infinite streams)
+playWavestream :: MVar () -> IORef Bool -> (MVar (OutputBuffer BiFloat) -> IORef Bool -> IO ()) -> IO ()
+playWavestream startCoord ks fillAction = do
   mob <- newMVar =<< mkOutputBuffer 0
-  _ <- forkIO $ writeToOutputBuffer (fmap packFloat ws) mob ks
+  _ <- forkIO $ fillAction mob ks
   cb <- mkAudioSourceCallback (bufferedAudioCallback mob ks)
   sccb <- mkSCCB $ (\_ -> forkIO (putMVar startCoord ()) *> pure ())
   ac <- c_InitAudio
   c_PlayAudioStream ac cb sccb *> freeHaskellFunPtr cb *> freeHaskellFunPtr sccb
   c_ReleaseAudio ac
-  where
-    packFloat = (\x -> BiFloat x x) . realToFrac . discreteToDouble
 
+playByWriting :: [Discrete] -> MVar (OutputBuffer BiFloat) -> IORef Bool -> IO ()
+playByWriting ws mob ks = writeToOutputBuffer (fmap packFloat ws) mob ks
+
+playByReading :: IOLacedStream BiFloat -> MVar (OutputBuffer BiFloat) -> IORef Bool -> IO ()
+playByReading ilsf mob ks = writeIOLaced ilsf mob ks
+
+packFloat :: Discrete -> BiFloat
+packFloat = (\x -> BiFloat x x) . realToFrac . discreteToDouble
+
+-- | Log the strings in time. Imprecision inherited from @'threadDelay'@
 explainNotes :: IORef Bool -> TimeStream String -> IO ()
 explainNotes _ EndStream = pure ()
 explainNotes ks (TimeStream t x xs) = readIORef ks >>= \doDie -> if doDie
@@ -155,15 +195,6 @@ explainNotes ks (TimeStream t x xs) = readIORef ks >>= \doDie -> if doDie
     putStrLn x
     threadDelay (floor $ t * 100000)
     explainNotes ks xs
-
-chunkSamples :: [Discrete] -> Int -> [BSS.ByteString]
-chunkSamples ws blockSize = let (out,rest) = splitAt blockSize ws in if null out then [] else let x = BSL.toStrict (BSB.toLazyByteString (foldl mappend mempty . concatMap packFloat $ out)) in x `seq` (x : chunkSamples rest blockSize)
-  where
-    packFloat = replicate numChannels . BSB.floatLE . realToFrac . discreteToDouble
-    numChannels = 2
-
-wavestreamToLazyByteString :: [Discrete] -> BSL.ByteString
-wavestreamToLazyByteString xs = BSL.fromChunks $ chunkSamples xs stdtr
 
 listenUnboundedWavestream :: [Discrete] -> IO ()
 listenUnboundedWavestream ws = WAVE.putWAVEFile "out/listen.wav" . wavestreamToWAVE (length ws) stdtr $ ws
@@ -180,25 +211,11 @@ listenWavetable = listenWavestream . streamWavetable
 listenChord :: ChordVoicing PitchFactorDiagram -> IO ()
 listenChord = listenWavetable . tickTable stdtr . discretize . balanceChord . map (sinWave . ($ concertA) . intervalOf) . getVoiceList
 
-{-
-listenArpChord :: ChordVoicing PitchFactorDiagram -> IO ()
-listenArpChord = listenWavetable . compose (stdtr * 3) . fmap (tickTable stdtr . discretize . sinWave . (*concertA) . diagramToRatio) . arpegiate
-
-listenChords :: TimeStream (ChordVoicing PitchFactorDiagram) -> IO ()
-listenChords = listenWavetable . mediumFO . compose (stdtr * 7) . fmap (tickTable stdtr . discretize . balanceChord . map (sinWave . (*concertA) . diagramToRatio) . getVoiceList)
-  where
-    mediumFO :: Wavetable -> Wavetable
-    mediumFO = amplitudeModulate (tickTable stdtr . discretize . fmap abs $ triWave 3)
-
--}
 listenTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamTimbreKey k timbre x = listenUnboundedWavestream $ makeWavestreamTimeStreamTimbreKey k timbre x
 
 makeWavestreamTimeStreamTimbreKey :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> [Discrete]
-makeWavestreamTimeStreamTimbreKey k timbre = timeStreamToValueStream (fromIntegral tempo) . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
-  where
-    tempo :: Int
-    tempo = floor @Double stdtr
+makeWavestreamTimeStreamTimbreKey k timbre = timeStreamToValueStream stdtr . fmap (maybe emptyWave id . fmap (timbre . flip intervalOf k))
 
 listenTimeStreamFollow :: Double -> (Double -> Wavetable) -> TimeStream (Maybe (Octaved PitchFactorDiagram)) -> IO ()
 listenTimeStreamFollow k timbre ts = listenUnboundedWavestream . meshWavestreams . fmap timbre . followValue' stdtr 0.5 . stepCompose (8/stdtr) . (fmap . fmap) (flip intervalOf k) $ ts
@@ -325,21 +342,15 @@ playArdSolfeck sol = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \se
 
 eqTimbre :: Double -> Wavetable
 eqTimbre = synthFromDiscreteProfile . harmonicEquationToDiscreteProfile (\x -> 0.1894 / (x ** 1.02)) (\x -> 0.0321 / (x ** 0.5669))
-{-
-    recAck sp l fc = do
-      threadDelay 100000
-      fc' <- Serial.recv sp 1 >>= \x -> if BSS.null x then pure (fc + 1) else putStrLn "Got ack!" *> Serial.flush sp *> putMVar l () *> takeMVar l *> pure 0
-      if fc' > 10
-        then putMVar l () *> takeMVar l *> recAck sp l 0
-        else recAck sp l fc'
--}
 
+-- | Make an arduino serial packet
 mkPkt :: Word8 -> String -> BSS.ByteString
 mkPkt pktId datas = BSS.pack $ 0x23 : pktId : go datas
   where
     go b@(_:_:xs) = readHex' (take 2 b) : go xs
     go _ = []
 
+-- | Interact with an arduino via text prompt
 doArduinoThing :: IO ()
 doArduinoThing = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser -> threadDelay 3000000 *> do
   lock <- newMVar ()
@@ -393,5 +404,6 @@ doArduinoThing = Serial.withSerial "COM3" Serial.defaultSerialSettings $ \ser ->
           putStrLn $ "What is " ++ show x ++ "?"
           doPrompt sp l
 
+-- | Read a singular byte off of a hex string
 readHex' :: String -> Word8
 readHex' x = case readHex x of {[] -> 0x00; ((a,_):_) -> a}

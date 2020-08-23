@@ -7,7 +7,8 @@ A music theory library for just intonation and other mathematically pure ideas.
 Documentation and additional exposition on [Hackage](https://hackage.haskell.org/package/boopadoop)!
 ## Usage
 
-Simply run `stack ghci` using [Haskell Stack Tool](https://www.haskellstack.org) to interact with boopadoop.
+Run the provided executable, or run `main` using `stack exec perfprof`.
+To interact with boopadoop, run `stack ghci` using [Haskell Stack Tool](https://www.haskellstack.org).
 
 ## SolFeck guide
 SolFeck is a shorthand language for quickly writing down twelve tone note sequences

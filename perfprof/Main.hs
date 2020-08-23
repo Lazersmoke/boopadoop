@@ -29,7 +29,9 @@ main'' = do
         let sf' = solFeck sf
         print sf'
         let ns = stretchTimeStream (1/16) sf'
-        let ws = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . (fmap . fmap) ttPFD $ ns
+        let wsGenerated = makeWavestreamTimeStreamTimbreKey (intervalOf (shiftOctave (-1) unison) concertA) eqTimbre . (fmap . fmap) ttPFD $ ns
+        -- Add silence at the end
+        let ws = wsGenerated <> repeat 0
         wt <- newMVar ()
         _writeOutThread <- forkIO $ (takeMVar wt *> writeFile "out/lilyout.ly" ("{ " ++ toLilyPond ns ++ " }") *> listenWavestream' 90 ws *> putMVar wt ())
 

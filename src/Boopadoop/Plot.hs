@@ -54,6 +54,9 @@ wavestreamAudioCallback killSwitch ws size ptr _flagsPtr = do
     numChannels = 2
 -}
 
+debugBuffers :: Bool
+debugBuffers = False
+
 writeToOutputBuffer :: Storable a => [a] -> MVar (OutputBuffer a) -> IORef Bool -> IO ()
 writeToOutputBuffer [] _ _ = pure ()
 writeToOutputBuffer fs mob ks = do
@@ -70,7 +73,7 @@ writeToOutputBuffer fs mob ks = do
           pokeArray (advancePtr (outBufferPtr ob) (outBufferWriteOffset ob)) fsWrite
           putMVar mob ob {outBufferWriteOffset = outBufferWriteOffset ob + length fsWrite}
           writeToOutputBuffer rest mob ks
-        else putMVar mob ob *> putStrLn "Blocking on write!" *> threadDelay 10000 *> writeToOutputBuffer fs mob ks
+        else putMVar mob ob *> (if debugBuffers then putStrLn "Blocking on write!" else pure ()) *> threadDelay 10000 *> writeToOutputBuffer fs mob ks
 
 yeetFromOutputBuffer :: Storable a => Int -> MVar (OutputBuffer a) -> Ptr a -> IO ()
 yeetFromOutputBuffer 0 _ _ = pure ()
@@ -79,8 +82,8 @@ yeetFromOutputBuffer reqSamps mob ptr = do
   let sampsAvail = outBufferWriteOffset ob
   if sampsAvail < reqSamps
     then if reqSamps > outBufferSize ob
-      then reallocArray (outBufferPtr ob) reqSamps >>= \obp' -> putMVar mob ob {outBufferPtr = obp', outBufferSize = reqSamps} *> putStrLn ("Resized out buffer to " ++ show reqSamps ++ "!") *> yeetFromOutputBuffer reqSamps mob ptr
-      else putMVar mob ob *> putStrLn "Bytes weren't ready to be read from output buffer in time!" *> threadDelay 10000 *> yeetFromOutputBuffer reqSamps mob ptr
+      then reallocArray (outBufferPtr ob) reqSamps >>= \obp' -> putMVar mob ob {outBufferPtr = obp', outBufferSize = reqSamps} *> (if debugBuffers then putStrLn ("Resized out buffer to " ++ show reqSamps ++ "!") else pure ()) *> yeetFromOutputBuffer reqSamps mob ptr
+      else putMVar mob ob *> (if debugBuffers then putStrLn "Bytes weren't ready to be read from output buffer in time!" else pure ()) *> threadDelay 10000 *> yeetFromOutputBuffer reqSamps mob ptr
     else do
       let newOutInd = sampsAvail - reqSamps
       copyArray ptr (outBufferPtr ob) reqSamps

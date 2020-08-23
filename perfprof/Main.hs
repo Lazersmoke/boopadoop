@@ -8,6 +8,7 @@ import Boopadoop.Ideate
 import Boopadoop.Rack
 
 import System.Random
+import System.Directory
 import System.IO
 import Control.Concurrent.MVar
 import Control.Concurrent
@@ -19,6 +20,7 @@ main = main''
 
 main'' :: IO ()
 main'' = do
+  createDirectoryIfMissing True "out"
   putStr "Enter SolFeck or press enter to listent to generated music!\n> "
   hFlush stdout
   sf <- getLine

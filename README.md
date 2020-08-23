@@ -5,7 +5,37 @@ Mathematically sound sound synthesis.
 
 A music theory library for just intonation and other mathematically pure ideas.
 Documentation and additional exposition on [Hackage](https://hackage.haskell.org/package/boopadoop)!
-## Pitches and Chords
+## Usage
+
+Simply run `stack ghci` using [Haskell Stack Tool](https://www.haskellstack.org) to interact with boopadoop.
+
+## SolFeck guide
+SolFeck is a shorthand language for quickly writing down twelve tone note sequences
+
+| SolFeck Symbol | What it does |
+| --- | --- |
+| Digit in `{0,1,...,9,a,b}` | Play the nearest pitch to the previous note from the corresponding pitch class |
+| `^` | Go an octave up for the next note |
+| `v` | Go an octave down for the next note |
+| `-` | Extend the previous note |
+| `=` followed by number | `=5` is the same as `-----` |
+| `~` followed by pitch symbol | `~4` modulates the key into `k=4` |
+| ` ` | Plays a rest (silence) |
+| `x` | Repeat previous note, e.g. `024xxxxx` is `02444444` |
+| `'` | Go up by one scale step, e.g. `0'` is `02` |
+| `.` | Go down by one scale step, e.g. `0.` is `0b` |
+| ``` | Go up by two scale steps, e.g. `0\`` is `04` |
+| `,` | Go down by two scale steps, e.g. `0,` is `09` |
+| `i` | Go up by three scale steps, e.g. `0i` is `05` |
+| `!` | Go down by three scale steps, e.g. `0!` is `07` |
+
+## Output
+
+Boopadoop will play your input or the generated music, and also output it to `out/listen.wav` as an audio file, and to `out/lilyout.ly` as a LilyPond music typesetting file.
+If you get the Lilypond program, you can double click this file and it will output a `lilyout.pdf` rendering of it as sheet music.
+
+## Older features (may not still work)
+### Pitches and Chords
 
 We can build chords:
 ```haskell
@@ -55,7 +85,7 @@ Also supports equal temperament semitones: (a perfect fifth is approximately sev
 Factors {getFactors = [1,-2,0,0,1,0,0,1,0,0,-1]}
 ```
 
-## Filtering
+### Filtering
 We have a Waveform that is made of a sine wave concert A (440 Hz) and a tritone above it (D# 609 Hz), and we want to filter out the tritone and end up with just the A.
 ```haskell
 unfiltered :: Wavetable
@@ -127,6 +157,3 @@ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.....xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 If you write `filtered` and `unfiltered` to `.wav` files using `testWave`, you can hear the difference!
-## Usage
-
-Simply run `stack ghci` using [Haskell Stack Tool](https://www.haskellstack.org) to interact with boopadoop.
